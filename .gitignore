@@ -1,0 +1,8 @@
+node_modules
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.avi
+*.mkv
+*.flv
