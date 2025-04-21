@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+{
+  "description": "Prevent Electron IPC message targeting issues between main and renderer processes",
+  "when": "main.js, preload.js, renderer.js or any Electron IPC implementation where windows send messages to each other",
+  "rule": "1. Always maintain global references to BrowserWindow instances instead of using BrowserWindow.getAllWindows()[0]\n2. Check window existence and destroyed state before sending IPC messages\n3. Add debug logs for all IPC sending/receiving\n4. Ensure channel names are consistent across preload context bridges\n5. Validate with console logs that messages are sent and received",
+  "examples": [
+    {
+      "before": "// Getting window reference\nBrowserWindow.getAllWindows()[0].webContents.send('updateState', { isRecording });\n\n// In preload.js\nlet validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording'];\n// recordingSaved missing from valid channels",
+      "after": "// Global reference\nlet mainWindow = null;\nfunction createWindow() {\n  mainWindow = new BrowserWindow({...});\n}\n\n// Safe message sending\nif (mainWindow && !mainWindow.isDestroyed()) {\n  console.log('Sending message to main window');\n  mainWindow.webContents.send('updateState', { isRecording });\n}\n\n// In preload.js\nlet validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'recordingSaved'];"
+    }
+  ],
+  "tags": ["hallucination", "bugfix", "Electron", "IPC", "BrowserWindow"]
+}

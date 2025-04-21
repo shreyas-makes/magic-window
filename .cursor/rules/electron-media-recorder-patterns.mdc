@@ -1,0 +1,121 @@
+---
+description: When implementing persistent storage in Electron applications, prefer a simple file-based storage solution over external packages like electron-store that might have compatibility issues with ES modules vs CommonJS
+globs: 
+alwaysApply: false
+---
+# Electron MediaRecorder Implementation Patterns
+
+## Storage Implementation
+When implementing persistent storage in Electron applications, prefer a simple file-based storage solution over external packages like electron-store that might have compatibility issues with ES modules vs CommonJS.
+
+### Example - Custom Settings Class
+```javascript
+// Instead of:
+const Store = require('electron-store');
+const store = new Store();
+
+// Use a custom implementation:
+class Settings {
+  constructor() {
+    this.settingsPath = path.join(app.getPath('userData'), 'settings.json');
+    this.data = {};
+    this.load();
+  }
+
+  load() {
+    try {
+      if (fs.existsSync(this.settingsPath)) {
+        const data = fs.readFileSync(this.settingsPath, 'utf8');
+        this.data = JSON.parse(data);
+      }
+    } catch (err) {
+      console.error('Error loading settings:', err);
+    }
+  }
+
+  save() {
+    try {
+      fs.writeFileSync(this.settingsPath, JSON.stringify(this.data, null, 2));
+    } catch (err) {
+      console.error('Error saving settings:', err);
+    }
+  }
+
+  get(key, defaultValue) {
+    return key in this.data ? this.data[key] : defaultValue;
+  }
+
+  set(key, value) {
+    this.data[key] = value;
+    this.save();
+  }
+}
+
+const store = new Settings();
+```
+
+Validation: Check console output for potential errors like 'Error loading settings' and implement fallback paths.
+
+## IPC Communication for MediaRecorder
+
+When implementing UI controls like pause/resume that need to affect a MediaRecorder instance running in a separate window:
+
+1. Always send explicit messages from the main process to the recording window
+2. Check for the existence of the recording window before sending messages
+3. Implement proper handlers in the recorder window
+
+### Example - Main Process (main.js)
+```javascript
+// Instead of simply updating UI state:
+function pauseRecording() {
+  if (isRecording && !isPaused) {
+    console.log('Pausing recording');
+    isPaused = true;
+    // In future, we'll add logic to actually pause the MediaRecorder
+    sendStateUpdate();
+  }
+}
+
+// Send messages to the recording window:
+function pauseRecording() {
+  if (isRecording && !isPaused && recordingWindow) {
+    console.log('Pausing recording');
+    isPaused = true;
+    
+    // Send pause command to recording window
+    recordingWindow.webContents.send('pause-recording');
+    
+    sendStateUpdate();
+  }
+}
+```
+
+### Example - Recorder Window (recorder.html)
+```javascript
+// Add event listeners for media control messages
+ipcRenderer.on('pause-recording', () => {
+  console.log('Received pause recording message');
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    try {
+      mediaRecorder.pause();
+      console.log('MediaRecorder paused');
+    } catch (error) {
+      console.error('Error pausing MediaRecorder:', error);
+    }
+  }
+});
+
+ipcRenderer.on('resume-recording', () => {
+  console.log('Received resume recording message');
+  if (mediaRecorder && mediaRecorder.state === 'paused') {
+    try {
+      mediaRecorder.resume();
+      console.log('MediaRecorder resumed');
+    } catch (error) {
+      console.error('Error resuming MediaRecorder:', error);
+    }
+  }
+});
+```
+
+Validation: Check console logs for successful pause/resume operations by verifying messages like 'MediaRecorder paused' and 'MediaRecorder resumed' appear when the corresponding controls are used.

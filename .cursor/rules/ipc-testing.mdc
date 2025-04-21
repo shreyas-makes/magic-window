@@ -1,0 +1,42 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# IPC Testing Implementation
+
+## Overview
+The application implements a ping-pong test to verify Inter-Process Communication (IPC) functionality between the main and renderer processes.
+
+## Components
+
+### Main Process Handler
+In [main.js](mdc:main.js), the ping handler:
+```javascript
+ipcMain.on('ping', () => {
+  console.log('ping received in main process');
+  BrowserWindow.getAllWindows()[0].webContents.send('pong');
+});
+```
+
+### Preload Bridge
+[preload.js](mdc:preload.js) exposes two secure methods:
+- `send('ping')`: Allows renderer to send ping
+- `on('pong', callback)`: Allows renderer to receive pong
+
+### Renderer Implementation
+[renderer.js](mdc:renderer.js) implements the test flow:
+1. Sends ping on page load
+2. Listens for pong response
+3. Updates UI status to reflect communication success
+
+## Test Flow
+1. Renderer sends 'ping' → Main process
+2. Main process receives 'ping'
+3. Main process sends 'pong' → Renderer
+4. Renderer updates UI on 'pong' receipt
+
+## Visual Feedback
+The test provides visual feedback through status updates:
+1. "Sending ping to main process..." (pending)
+2. "Communication test successful!" (success)

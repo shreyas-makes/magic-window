@@ -4,11 +4,11 @@ Phase 1: Foundation & Core Recording
 -----------------------------------
 
 Chunk 1.1: Basic Electron Project Setup
-- Step 1.1.1: Initialize Electron project (npm init, add Electron dependency)
-- Step 1.1.2: Create basic main.js to open a main window (BrowserWindow)
+- Step 1.1.1: Initialize Electron project (npm init, add Electron v35 dependency)
+- Step 1.1.2: Create basic main.js to open a responsive main window (80% of screen size)
 - Step 1.1.3: Create basic index.html and renderer.js
 - Step 1.1.4: Set up basic IPC communication (main <-> renderer)
-Test Goal: App launches, shows a window, basic message passing works
+Test Goal: App launches, shows a responsive window, basic message passing works
 
 Chunk 1.2: Screen/Window Source Selection
 - Step 1.2.1: Use desktopCapturer in the main process to get available sources (screens, windows)

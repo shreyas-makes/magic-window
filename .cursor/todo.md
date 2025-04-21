@@ -2,9 +2,9 @@ Here's a more detailed checklist for building the Magic Window Screen Recorder:
 
 Phase 1: Foundation & Core Recording
 [ ] Step 1: Basic Electron Project Setup
-[ ] Initialize Node.js project, add Electron dependency
+[ ] Initialize Node.js project, add Electron v35 dependency
 [ ] Create main.js, index.html, renderer.js, preload.js
-[ ] Configure main.js to open a BrowserWindow loading index.html
+[ ] Configure main.js to open a responsive BrowserWindow (80% of screen size)
 [ ] Implement basic app lifecycle handlers (ready, activate, window-all-closed)
 [ ] Set up preload.js with contextBridge to expose basic IPC
 [ ] Implement and test simple "ping-pong" IPC message

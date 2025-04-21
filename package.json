@@ -1,0 +1,17 @@
+{
+  "name": "magic-window",
+  "version": "1.0.0",
+  "description": "macOS screen recorder app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^35.2.0"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  }
+}

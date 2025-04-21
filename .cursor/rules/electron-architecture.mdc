@@ -1,0 +1,38 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Electron Application Architecture
+
+## Core Components
+The application is built with Electron and follows a multi-process architecture with secure inter-process communication (IPC).
+
+### Main Process
+The entry point is [main.js](mdc:main.js), which handles:
+- Application lifecycle (startup, window management, shutdown)
+- IPC message handling from renderer process
+- Window creation and configuration
+
+### Preload Script
+[preload.js](mdc:preload.js) provides a secure bridge between processes:
+- Exposes limited API via contextBridge
+- Implements security restrictions for IPC channels
+- Currently allows 'ping' sending and 'pong' receiving
+
+### Renderer Process
+[renderer.js](mdc:renderer.js) runs in the browser window and:
+- Handles UI interactions
+- Communicates with main process via exposed electronAPI
+- Updates DOM based on IPC responses
+
+## Communication Flow
+1. Renderer → Main: Uses `window.electronAPI.send('channel', data)`
+2. Main → Renderer: Uses `BrowserWindow.webContents.send('channel', data)`
+3. All communication is validated through preload.js security checks
+
+## Security Model
+- Context Isolation: Enabled
+- Node Integration: Disabled
+- Preload Script: Implements principle of least privilege
+- IPC Channels: Explicitly whitelisted in preload.js

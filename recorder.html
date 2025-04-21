@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Screen Recorder</title>
+</head>
+<body>
+  <script>
+    // Recorder state
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let selectedMimeType = null;
+    
+    // Try to find the best supported MIME type
+    function getBestMimeType() {
+      const mimeTypes = [
+        'video/mp4; codecs=avc1',
+        'video/webm; codecs=h264',
+        'video/webm; codecs=vp9',
+        'video/webm'
+      ];
+      
+      for (const mimeType of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mimeType)) {
+          console.log('Found supported MIME type:', mimeType);
+          return mimeType;
+        }
+      }
+      
+      throw new Error('No supported video MIME types found for MediaRecorder');
+    }
+    
+    // Start recording with the given source ID
+    async function startRecording(sourceId) {
+      try {
+        console.log('Starting recording with source ID:', sourceId);
+        
+        // Get the media stream
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId
+            }
+          }
+        });
+        
+        // Find the best supported MIME type
+        selectedMimeType = getBestMimeType();
+        console.log('Using MIME type:', selectedMimeType);
+        
+        // Inform the main process about the selected MIME type
+        const { ipcRenderer } = require('electron');
+        ipcRenderer.send('recording-mime-type', { mimeType: selectedMimeType });
+        
+        // Create the media recorder
+        mediaRecorder = new MediaRecorder(stream, { mimeType: selectedMimeType });
+        recordedChunks = [];
+        
+        // Handle data available event
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            recordedChunks.push(event.data);
+            console.log('Data chunk available, size:', event.data.size);
+          }
+        };
+        
+        // Handle stop event
+        mediaRecorder.onstop = async () => {
+          console.log('MediaRecorder stopped, processing data...');
+          
+          try {
+            // Create a blob from all chunks
+            const blob = new Blob(recordedChunks, { type: selectedMimeType });
+            console.log('Blob created, size:', blob.size);
+            
+            // Convert blob to array buffer
+            const arrayBuffer = await blob.arrayBuffer();
+            console.log('Array buffer created, size:', arrayBuffer.byteLength);
+            
+            // Send data to main process
+            ipcRenderer.send('recording-data', { 
+              buffer: arrayBuffer,
+              mimeType: selectedMimeType
+            });
+            
+            // Notify main process that recording is complete
+            ipcRenderer.send('recording-complete');
+            
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
+          } catch (error) {
+            console.error('Error processing recording:', error);
+          }
+        };
+        
+        // Start recording with 1-second chunks
+        mediaRecorder.start(1000);
+        console.log('Recording started');
+      } catch (error) {
+        console.error('Error starting recording:', error);
+      }
+    }
+    
+    // Listen for the source ID
+    document.addEventListener('sourceReady', () => {
+      if (window.sourceId) {
+        startRecording(window.sourceId);
+      } else {
+        console.error('No source ID provided');
+      }
+    });
+    
+    // Listen for IPC messages from main process
+    const { ipcRenderer } = require('electron');
+    
+    // Listen for stop recording message from main process
+    ipcRenderer.on('stop-recording', () => {
+      console.log('Received stop recording message');
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    });
+    
+    // Listen for pause recording message from main process
+    ipcRenderer.on('pause-recording', () => {
+      console.log('Received pause recording message');
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try {
+          mediaRecorder.pause();
+          console.log('MediaRecorder paused');
+        } catch (error) {
+          console.error('Error pausing MediaRecorder:', error);
+        }
+      }
+    });
+    
+    // Listen for resume recording message from main process
+    ipcRenderer.on('resume-recording', () => {
+      console.log('Received resume recording message');
+      if (mediaRecorder && mediaRecorder.state === 'paused') {
+        try {
+          mediaRecorder.resume();
+          console.log('MediaRecorder resumed');
+        } catch (error) {
+          console.error('Error resuming MediaRecorder:', error);
+        }
+      }
+    });
+  </script>
+</body>
+</html> 

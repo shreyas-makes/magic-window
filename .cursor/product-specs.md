@@ -3,7 +3,8 @@
 ## 1. Core MVP Requirements
 
 ### 1.1 Basic Recording Functionality
-- Notarized macOS Electron 28 app
+- Notarized macOS Electron 35 app
+- Responsive window sizing (80% of screen dimensions)
 - 4K 60 FPS capture with unlimited duration
 - Fragmented MP4 local storage
 - CPU usage ≤30% on M1 Pro with VideoToolbox HEVC
