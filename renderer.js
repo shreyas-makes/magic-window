@@ -2,9 +2,10 @@
 // Import path module from Node.js through the preload script
 const path = { sep: '/' }; // Simple path separator for use in the renderer
 
-// Import GSAP for smooth animations
-import gsap from 'gsap';
-import { FXAAFilter } from '@pixi/filter-fxaa';
+// Reference GSAP and FXAA from global window variables (loaded from CDN)
+// No need to import since we're loading from CDN in the HTML
+// import gsap from 'gsap';
+// import { FXAAFilter } from '@pixi/filter-fxaa';
 
 // Canvas and recording variables
 let app = null; // PIXI application
@@ -1044,6 +1045,7 @@ function setZoom(level, centerX, centerY, duration = 0.3) {
     state.targetCenterX = centerX;
     state.targetCenterY = centerY;
     
+    // Use the global gsap object
     gsap.to(state, {
         currentZoom: level,
         currentCenterX: centerX,
@@ -1061,7 +1063,8 @@ function toggleFXAA() {
     
     if (fxaaEnabled) {
         if (!fxaaFilter) {
-            fxaaFilter = new FXAAFilter();
+            // Use PIXI.filters.FXAAFilter instead of imported FXAAFilter
+            fxaaFilter = new PIXI.filters.FXAAFilter();
         }
         videoSprite.filters = [fxaaFilter];
     } else {
@@ -1118,7 +1121,7 @@ async function setupPixiRendering() {
         
         // Initialize FXAA filter if enabled
         if (fxaaEnabled && !fxaaFilter) {
-            fxaaFilter = new FXAAFilter();
+            fxaaFilter = new PIXI.filters.FXAAFilter();
             videoSprite.filters = [fxaaFilter];
         }
         
@@ -1205,6 +1208,8 @@ async function setupPixiRendering() {
         fxaaToggle.style.position = 'absolute';
         fxaaToggle.style.bottom = '10px';
         fxaaToggle.style.right = '10px';
+        fxaaToggle.style.zIndex = '1000'; // Make sure it's above other elements
+        fxaaToggle.className = 'btn'; // Add the btn class to match other buttons
         fxaaToggle.addEventListener('click', toggleFXAA);
         document.body.appendChild(fxaaToggle);
 
