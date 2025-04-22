@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 // Simple settings storage implementation
 class Settings {
@@ -49,6 +50,8 @@ let isPaused = false;
 let recordingWindow = null;
 let mainWindow = null; // Global reference to main window
 let currentSavePath = null;
+let tempSessionDir = null; // For storing temporary session directory
+let segmentIndex = 0; // For tracking segment numbers
 
 function createWindow() {
   // Get the primary display's work area dimensions
@@ -165,6 +168,28 @@ function initializeSavePath() {
   }
 }
 
+// Helper function to get formatted timestamp for file names (YYYY-MM-DD at HH.MM.SS)
+function getFormattedTimestamp() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hour = String(now.getHours()).padStart(2, '0');
+  const minute = String(now.getMinutes()).padStart(2, '0');
+  const second = String(now.getSeconds()).padStart(2, '0');
+  
+  return `${year}-${month}-${day} at ${hour}.${minute}.${second}`;
+}
+
+// Helper function to get current recording directory path
+function getCurrentRecordingDir(basePath) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  
+  return path.join(basePath, 'Magic Window', `${year}-${month}`);
+}
+
 // Create window when app is ready
 app.whenReady().then(() => {
   createWindow();
@@ -262,6 +287,15 @@ app.whenReady().then(() => {
     }
     
     try {
+      // Create a unique temporary directory for this recording session
+      const tempBaseDir = path.join(os.tmpdir(), 'magic-window-recorder');
+      fs.mkdirSync(tempBaseDir, { recursive: true });
+      tempSessionDir = fs.mkdtempSync(path.join(tempBaseDir, 'recording-'));
+      console.log(`Created temporary session directory: ${tempSessionDir}`);
+      
+      // Reset segment index
+      segmentIndex = 0;
+      
       // Create a new BrowserWindow to handle the recording
       recordingWindow = new BrowserWindow({
         width: 400,
@@ -276,9 +310,10 @@ app.whenReady().then(() => {
       // Load an HTML file for recording
       await recordingWindow.loadFile('recorder.html');
       
-      // Pass the sourceId to the recording window
+      // Pass the sourceId and tempSessionDir to the recording window
       recordingWindow.webContents.executeJavaScript(`
         window.sourceId = '${sourceId}';
+        window.tempSessionDir = '${tempSessionDir.replace(/\\/g, '\\\\')}';
         document.dispatchEvent(new Event('sourceReady'));
       `);
       
@@ -306,49 +341,84 @@ app.whenReady().then(() => {
     }
   });
   
-  // Handle recording data from the recording window
-  ipcMain.on('recording-data', (event, { buffer, mimeType }) => {
+  // Handle segment data from the recording window
+  ipcMain.on('segment-data', (event, { buffer, mimeType, segmentNumber }) => {
     try {
+      // Ensure temp session directory exists
+      if (!tempSessionDir) {
+        throw new Error('No temporary session directory available');
+      }
+      
       // Determine file extension based on MIME type
       let fileExtension = '.mp4'; // Default
       if (mimeType && mimeType.includes('webm')) {
         fileExtension = '.webm';
       }
       
-      // Create directory structure: /Magic Window/YYYY-MM/
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const dirPath = path.join(currentSavePath, 'Magic Window', `${year}-${month}`);
+      // Create segment file name
+      const segmentFileName = `segment_${segmentNumber}${fileExtension}`;
+      const segmentPath = path.join(tempSessionDir, segmentFileName);
       
-      // Create directories if they don't exist
-      fs.mkdirSync(dirPath, { recursive: true });
+      // Write segment data to file
+      fs.writeFileSync(segmentPath, Buffer.from(buffer));
       
-      // Create file name with timestamp
-      const fileName = `recording-${Date.now()}${fileExtension}`;
-      const savePath = path.join(dirPath, fileName);
-      
-      fs.writeFileSync(savePath, Buffer.from(buffer));
-      
-      console.log(`Recording saved to: ${savePath}`);
-      
-      // Send the saved notification to the main window
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        console.log('MAIN: Sending recordingSaved notification with path:', savePath);
-        mainWindow.webContents.send('recordingSaved', savePath);
-      } else {
-        console.warn('mainWindow not available for recordingSaved notification');
-      }
+      console.log(`Segment ${segmentNumber} saved to: ${segmentPath}`);
     } catch (error) {
-      console.error('Error saving recording:', error);
+      console.error('Error saving segment:', error);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('recordingError', error.toString());
       }
     }
   });
   
+  // Handle listing segment files
+  ipcMain.handle('listSegments', async (event, dirPath) => {
+    try {
+      if (!fs.existsSync(dirPath)) {
+        throw new Error('Directory does not exist');
+      }
+      
+      // Get all files in the directory
+      const files = fs.readdirSync(dirPath);
+      
+      // Filter for segment files and sort them
+      const segmentFiles = files
+        .filter(file => file.startsWith('segment_') && (file.endsWith('.mp4') || file.endsWith('.webm')))
+        .sort((a, b) => {
+          // Extract segment numbers for proper sorting
+          const numA = parseInt(a.replace('segment_', '').split('.')[0]);
+          const numB = parseInt(b.replace('segment_', '').split('.')[0]);
+          return numA - numB;
+        })
+        .map(file => {
+          const fullPath = path.join(dirPath, file);
+          const stats = fs.statSync(fullPath);
+          return {
+            name: file,
+            path: fullPath,
+            size: stats.size,
+            // Format size in KB or MB
+            formattedSize: stats.size > 1024 * 1024 
+              ? `${(stats.size / (1024 * 1024)).toFixed(2)} MB` 
+              : `${(stats.size / 1024).toFixed(2)} KB`
+          };
+        });
+      
+      return segmentFiles;
+    } catch (error) {
+      console.error('Error listing segments:', error);
+      throw error;
+    }
+  });
+  
   // Handle recording complete notification
   ipcMain.on('recording-complete', () => {
+    console.log('Recording completed, ready for concatenation');
+    console.log(`All segments stored in: ${tempSessionDir}`);
+    console.log(`Final path will be in: ${getCurrentRecordingDir(currentSavePath)}`);
+    
+    // Placeholder for future concatenation logic
+    
     isRecording = false;
     isPaused = false;
     if (recordingWindow) {
@@ -356,6 +426,11 @@ app.whenReady().then(() => {
       recordingWindow = null;
     }
     sendStateUpdate();
+    
+    // Send just the path to the temporary directory, not a string with text and path
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('recordingSaved', tempSessionDir);
+    }
   });
   
   // Handle stop recording request

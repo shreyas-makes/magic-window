@@ -291,7 +291,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // Listen for recording saved notification
-  window.electronAPI.on('recordingSaved', (filePath) => {
+  window.electronAPI.on('recordingSaved', async (filePath) => {
     console.log('Recording saved:', filePath);
     
     // Make sure these elements are available in this scope
@@ -302,24 +302,89 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusEl.textContent = 'Recording saved successfully';
     statusEl.className = 'status success';
     
-    // Make the file path more visible and add a clickable link
-    recordingMessageEl.innerHTML = `
-      <div>Recording saved successfully!</div>
-      <div class="file-path">Location: <span class="path">${filePath}</span></div>
-      <button id="openFileBtn" class="open-file-btn">Open File</button>
-    `;
-    recordingMessageEl.className = 'success';
-    
-    // Add click handler for the open file button
-    setTimeout(() => {
-      const openFileBtn = document.getElementById('openFileBtn');
-      if (openFileBtn) {
-        openFileBtn.addEventListener('click', () => {
-          console.log('Open file button clicked for:', filePath);
-          window.electronAPI.openFile(filePath);
-        });
+    try {
+      // Get list of segment files
+      const segments = await window.electronAPI.listSegments(filePath);
+      
+      if (segments.length === 0) {
+        recordingMessageEl.innerHTML = `
+          <div>No recording segments found in the directory.</div>
+          <div class="file-path">Location: <span class="path">${filePath}</span></div>
+          <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
+        `;
+        recordingMessageEl.className = 'warning';
+      } else {
+        // Create HTML for segment list
+        const segmentListHTML = segments.map((segment, index) => `
+          <div class="segment-item">
+            <span class="segment-name">${segment.name}</span>
+            <span class="segment-size">(${segment.formattedSize})</span>
+            <button class="play-segment-btn" data-path="${segment.path}">Play</button>
+          </div>
+        `).join('');
+        
+        // Make the file path more visible and add a clickable link
+        recordingMessageEl.innerHTML = `
+          <div>Recording segments saved successfully!</div>
+          <div class="file-path">Location: <span class="path">${filePath}</span></div>
+          <div class="segments-container">
+            <h4>Recording Segments:</h4>
+            <div class="segment-list">
+              ${segmentListHTML}
+            </div>
+          </div>
+          <div class="note">
+            <strong>Note:</strong> Individual segments may not play correctly. 
+            The concatenation feature to create a complete video will be implemented soon.
+          </div>
+          <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
+        `;
+        recordingMessageEl.className = 'success';
       }
-    }, 100); // Small timeout to ensure the DOM is updated
+      
+      // Add click handler for the open directory button
+      setTimeout(() => {
+        const openDirectoryBtn = document.getElementById('openDirectoryBtn');
+        if (openDirectoryBtn) {
+          openDirectoryBtn.addEventListener('click', () => {
+            console.log('Open directory button clicked for:', filePath);
+            window.electronAPI.openFile(filePath);
+          });
+        }
+        
+        // Add click handlers for play segment buttons
+        const playButtons = document.querySelectorAll('.play-segment-btn');
+        playButtons.forEach(button => {
+          button.addEventListener('click', () => {
+            const segmentPath = button.getAttribute('data-path');
+            console.log('Play segment button clicked for:', segmentPath);
+            window.electronAPI.openFile(segmentPath);
+          });
+        });
+      }, 100); // Small timeout to ensure the DOM is updated
+    } catch (error) {
+      console.error('Error listing segments:', error);
+      
+      // Fallback to simple display if segment listing fails
+      recordingMessageEl.innerHTML = `
+        <div>Recording segments saved successfully!</div>
+        <div class="file-path">Location: <span class="path">${filePath}</span></div>
+        <div class="error-message">Error listing segments: ${error.message}</div>
+        <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
+      `;
+      recordingMessageEl.className = 'warning';
+      
+      // Add click handler for the open directory button
+      setTimeout(() => {
+        const openDirectoryBtn = document.getElementById('openDirectoryBtn');
+        if (openDirectoryBtn) {
+          openDirectoryBtn.addEventListener('click', () => {
+            console.log('Open directory button clicked for:', filePath);
+            window.electronAPI.openFile(filePath);
+          });
+        }
+      }, 100); // Small timeout to ensure the DOM is updated
+    }
   });
 });
 

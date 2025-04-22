@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('getSettings'),
   // Show save dialog
   showSaveDialog: () => ipcRenderer.invoke('showSaveDialog'),
+  // Get list of segments in a directory
+  listSegments: (dirPath) => ipcRenderer.invoke('listSegments', dirPath),
   // Send source selected event
   sourceSelected: (sourceId) => ipcRenderer.send('sourceSelected', sourceId),
   // Start recording

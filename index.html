@@ -3,46 +3,59 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Magic Window Recorder</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <h1>Magic Window Recorder</h1>
-  <div id="status" class="status">Initializing...</div>
-  
-  <div class="source-selection">
-    <h2>Select Recording Source</h2>
-    <div class="controls">
-      <select id="sourceSelect">
-        <option value="">-- Select a source --</option>
-      </select>
-      <button id="refreshSources">Refresh Sources</button>
+  <div class="container">
+    <h1 class="title">Magic Window Recorder</h1>
+    <div id="status" class="status">Initializing...</div>
+    
+    <div class="section source-selection">
+      <h2 class="section-title">Select Recording Source</h2>
+      <div class="controls">
+        <select id="sourceSelect" class="full-width">
+          <option value="">-- Select a source --</option>
+        </select>
+        <button id="refreshSources" class="btn">Refresh Sources</button>
+      </div>
+    </div>
+    
+    <div class="section save-location">
+      <h2 class="section-title">Save Location</h2>
+      <div class="controls">
+        <div id="currentSavePath" class="save-path full-width">Loading...</div>
+        <button id="changeSaveLocation" class="btn">Change...</button>
+      </div>
+    </div>
+    
+    <div class="section disk-space">
+      <h2 class="section-title">Disk Space</h2>
+      <div class="disk-space-container">
+        <div class="disk-space-bar">
+          <div id="diskSpaceUsed" class="disk-space-used" style="width: 0%;"></div>
+        </div>
+        <div id="diskSpaceInfo" class="disk-space-info">Checking available space...</div>
+      </div>
+    </div>
+    
+    <div class="section recording-controls">
+      <h2 class="section-title">Recording Controls</h2>
+      <div class="controls button-group">
+        <button id="startRecording" class="btn primary" disabled>Start Recording</button>
+        <button id="pauseRecording" class="btn" disabled>Pause</button>
+        <button id="resumeRecording" class="btn" disabled>Resume</button>
+        <button id="stopRecording" class="btn danger" disabled>Stop Recording</button>
+      </div>
+    </div>
+    
+    <div class="section recording-status">
+      <div id="recordingMessage" class="message"></div>
+      <div id="timer-display" class="timer">00:00:00</div>
     </div>
   </div>
-  
-  <div class="save-location">
-    <h2>Save Location</h2>
-    <div class="controls">
-      <div id="currentSavePath" class="save-path">Loading...</div>
-      <button id="changeSaveLocation">Change...</button>
-    </div>
-  </div>
-  
-  <div class="recording-controls">
-    <h2>Recording Controls</h2>
-    <div class="controls">
-      <button id="startRecording" disabled>Start Recording</button>
-      <button id="pauseRecording" disabled>Pause</button>
-      <button id="resumeRecording" disabled>Resume</button>
-      <button id="stopRecording" disabled>Stop Recording</button>
-    </div>
-  </div>
-  
-  <div class="recording-status">
-    <div id="recordingMessage"></div>
-    <div id="timer-display" class="timer">00:00:00</div>
-  </div>
-  
+
   <script src="renderer.js"></script>
 </body>
-</html> 
+</html>

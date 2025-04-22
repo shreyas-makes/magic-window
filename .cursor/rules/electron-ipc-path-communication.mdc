@@ -1,0 +1,50 @@
+---
+description: When implementing features that involve file or path operations between Electron's main and renderer processes, use this rule to ensure proper path handling. This rule is particularly relevant when: - Implementing file save/open operations - Handling temporary file paths - Working with directory paths - Adding new IPC communication involving paths - Modifying existing path-related IPC calls
+globs: 
+alwaysApply: false
+---
+# Electron IPC Path Communication
+
+## Problem
+When sending file or directory paths between processes in Electron applications (main to renderer via IPC), embedding paths within descriptive strings can cause issues when the path is later used for file operations.
+
+## Pattern
+Always send raw paths as-is during IPC communication, without combining them with descriptive messages. Add any UI text only at the display layer where the path is shown to the user.
+
+## Examples
+
+### Incorrect pattern (Main process)
+```javascript
+mainWindow.webContents.send('recordingSaved', `Segments saved to: ${tempSessionDir}`);
+```
+
+### Correct pattern (Main process)
+```javascript
+mainWindow.webContents.send('recordingSaved', tempSessionDir);
+```
+
+### Incorrect pattern (Renderer process)
+```javascript
+window.electronAPI.openFile(`Segments saved to: ${filePath}`);
+```
+
+### Correct pattern (Renderer process)
+```javascript
+window.electronAPI.openFile(filePath);
+```
+
+## Validation
+Verify that the path can be used successfully with file system operations by checking console logs for errors. Ensure paths are properly formatted and accessible when used in operations like `fs.existsSync()`, `shell.openPath()`, etc.
+
+## Files to Review
+- [main.js](mdc:main.js) - Contains IPC handlers and file operations in the main process
+- [preload.js](mdc:preload.js) - Exposes IPC capabilities to renderer
+- [renderer.js](mdc:renderer.js) - Handles renderer-side IPC communication
+
+
+## Tags
+- Electron
+- IPC Communication
+- File System
+- Path Handling
+- Agent Requested

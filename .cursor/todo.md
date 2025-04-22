@@ -1,48 +1,48 @@
 Here's a more detailed checklist for building the Magic Window Screen Recorder:
 
 Phase 1: Foundation & Core Recording
-[ ] Step 1: Basic Electron Project Setup
-[ ] Initialize Node.js project, add Electron v35 dependency
-[ ] Create main.js, index.html, renderer.js, preload.js
-[ ] Configure main.js to open a responsive BrowserWindow (80% of screen size)
-[ ] Implement basic app lifecycle handlers (ready, activate, window-all-closed)
-[ ] Set up preload.js with contextBridge to expose basic IPC
-[ ] Implement and test simple "ping-pong" IPC message
-[ ] Step 2: Screen/Window Source Selection
-[ ] Use desktopCapturer.getSources in main.js
-[ ] Create IPC handler (ipcMain.handle) to return sources
-[ ] Expose IPC invoker via preload.js
-[ ] Call IPC from renderer.js to get sources
-[ ] Populate a <select> dropdown in index.html with source names/IDs
-[ ] Add "Refresh" button to re-fetch sources
-[ ] Send selected source ID back to main process via IPC (ipcMain.on)
-[ ] Step 3: Basic Recording & Saving
-[ ] Get MediaStream from selected source ID (handle context: main/renderer/helper)
-[ ] Instantiate MediaRecorder with stream (video only, H.264 MP4 initially)
-[ ] Implement startRecording IPC handler
-[ ] Implement stopRecording IPC handler
-[ ] Set up mediaRecorder.ondataavailable to collect Blob chunks
-[ ] Set up mediaRecorder.onstop to combine chunks and save to a fixed temporary file (fs.writeFileSync)
-[ ] Add basic isRecording state in main process
-[ ] Send state updates (isRecording) to renderer via IPC
-[ ] Update renderer UI (e.g., disable buttons) based on state
+[x] Step 1: Basic Electron Project Setup
+[x] Initialize Node.js project, add Electron v35 dependency
+[x] Create main.js, index.html, renderer.js, preload.js
+[x] Configure main.js to open a responsive BrowserWindow (80% of screen size)
+[x] Implement basic app lifecycle handlers (ready, activate, window-all-closed)
+[x] Set up preload.js with contextBridge to expose basic IPC
+[x] Implement and test simple "ping-pong" IPC message
+[x] Step 2: Screen/Window Source Selection
+[x] Use desktopCapturer.getSources in main.js
+[x] Create IPC handler (ipcMain.handle) to return sources
+[x] Expose IPC invoker via preload.js
+[x] Call IPC from renderer.js to get sources
+[x] Populate a <select> dropdown in index.html with source names/IDs
+[x] Add "Refresh" button to re-fetch sources
+[x] Send selected source ID back to main process via IPC (ipcMain.on)
+[x] Step 3: Basic Recording & Saving
+[x] Get MediaStream from selected source ID (handle context: main/renderer/helper)
+[x] Instantiate MediaRecorder with stream (video only, H.264 MP4 initially)
+[x] Implement startRecording IPC handler
+[x] Implement stopRecording IPC handler
+[x] Set up mediaRecorder.ondataavailable to collect Blob chunks
+[x] Set up mediaRecorder.onstop to combine chunks and save to a fixed temporary file (fs.writeFileSync)
+[x] Add basic isRecording state in main process
+[x] Send state updates (isRecording) to renderer via IPC
+[x] Update renderer UI (e.g., disable buttons) based on state
 
 
 Phase 2: UI & Basic Controls
-[ ] Step 4: Recording Controls (Hotkey, Timer, Save Location)
-[ ] Register globalShortcut (Cmd+Shift+9) in main.js
-[ ] Implement hotkey callback to toggle Start/Stop based on isRecording state
-[ ] Add "Start" / "Stop" buttons to index.html, wire to IPC
-[ ] Add timer display element to index.html
-[ ] Implement timer logic in renderer.js (start/stop/reset based on recording state)
-[ ] Add "Choose Save Folder" button and path display to index.html
-[ ] Implement dialog.showOpenDialog via IPC handler in main.js
-[ ] Install and use electron-store to persist the chosen save path
-[ ] Update saving logic to use the stored path (use basic timestamped filename for now)
-[ ] Add basic isPaused state variable (main) and placeholder Pause/Resume buttons/IPC (renderer/main)
+[x] Step 4: Recording Controls (Hotkey, Timer, Save Location)
+[x] Register globalShortcut (Cmd+Shift+9) in main.js
+[x] Implement hotkey callback to toggle Start/Stop based on isRecording state
+[x] Add "Start" / "Stop" buttons to index.html, wire to IPC
+[x] Add timer display element to index.html
+[x] Implement timer logic in renderer.js (start/stop/reset based on recording state)
+[x] Add "Choose Save Folder" button and path display to index.html
+[x] Implement dialog.showOpenDialog via IPC handler in main.js
+[x] Install and use electron-store to persist the chosen save path
+[x] Update saving logic to use the stored path (use basic timestamped filename for now)
+[x] Add basic isPaused state variable (main) and placeholder Pause/Resume buttons/IPC (renderer/main)
 [ ] Step 5: Storage - File Naming, Structure, Segmentation
-[ ] Create helper function for final file naming (Magic Window Recording - YYYY-MM-DD at HH.MM.SS.mp4)
-[ ] Create helper function for directory structure ([BasePath]/Magic Window/YYYY-MM/), ensure directory creation
+[x] Create helper function for final file naming (Magic Window Recording - YYYY-MM-DD at HH.MM.SS.mp4)
+[x] Create helper function for directory structure ([BasePath]/Magic Window/YYYY-MM/), ensure directory creation
 [ ] Modify mediaRecorder.start() call to include timeslice (e.g., 10 minutes or 10 seconds for testing)
 [ ] On startRecording, create a unique temporary directory (fs.mkdtemp)
 [ ] Modify mediaRecorder.ondataavailable to save each chunk as segment_N.mp4 in the temp directory
@@ -135,18 +135,18 @@ Phase 5: Zoom UI & Interaction
 
 
 Phase 6: Integration, Polishing & Deployment
-[ ] Step 14: HEVC, Performance Tuning & Pause/Resume
+[x] Step 14: HEVC, Performance Tuning & Pause/Resume
 [ ] Check MediaRecorder.isTypeSupported for HEVC (hvc1) in renderer
 [ ] Configure MediaRecorder mimeType for HEVC if supported (fallback to H.264)
 [ ] Set appropriate videoBitsPerSecond for 4K/60FPS HEVC (~20-40 Mbps)
 [ ] Profile CPU/GPU/RAM/FPS during recording (baseline & zoom) using DevTools/Activity Monitor
 [ ] Optimize Pixi rendering, IPC frequency, snapshot generation as needed
 [ ] Test for dropped frames over long recording (aim for <= 0.5%)
-[ ] Implement mediaRecorder.pause() in renderer triggered by IPC
-[ ] Implement mediaRecorder.resume() in renderer triggered by IPC
-[ ] Update renderer state (isPaused) and timer logic for pause/resume
-[ ] Update main UI buttons (add dedicated Stop button, update Pause/Resume visibility)
-[ ] Modify Cmd+Shift+9 hotkey logic for Start -> Pause -> Resume cycle
+[x] Implement mediaRecorder.pause() in renderer triggered by IPC
+[x] Implement mediaRecorder.resume() in renderer triggered by IPC
+[x] Update renderer state (isPaused) and timer logic for pause/resume
+[x] Update main UI buttons (add dedicated Stop button, update Pause/Resume visibility)
+[x] Modify Cmd+Shift+9 hotkey logic for Start -> Pause -> Resume cycle
 [ ] Step 15: Accessibility, Error Handling, Recovery & Sandboxing
 [ ] Review all UI elements (index.html, panel.html) for ARIA attributes/labels
 [ ] Add aria-live regions for status updates (timer, zoom level) if possible

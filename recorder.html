@@ -10,6 +10,7 @@
     let mediaRecorder = null;
     let recordedChunks = [];
     let selectedMimeType = null;
+    let segmentIndex = 0;
     
     // Try to find the best supported MIME type
     function getBestMimeType() {
@@ -56,48 +57,46 @@
         
         // Create the media recorder
         mediaRecorder = new MediaRecorder(stream, { mimeType: selectedMimeType });
-        recordedChunks = [];
         
-        // Handle data available event
-        mediaRecorder.ondataavailable = (event) => {
+        // Handle data available event (called when segment is ready)
+        mediaRecorder.ondataavailable = async (event) => {
           if (event.data.size > 0) {
-            recordedChunks.push(event.data);
-            console.log('Data chunk available, size:', event.data.size);
+            console.log(`Segment ${segmentIndex} available, size:`, event.data.size);
+            
+            try {
+              // Convert blob to array buffer
+              const arrayBuffer = await event.data.arrayBuffer();
+              
+              // Send segment data to main process
+              ipcRenderer.send('segment-data', { 
+                buffer: arrayBuffer,
+                mimeType: selectedMimeType,
+                segmentNumber: segmentIndex
+              });
+              
+              // Increment segment index for next segment
+              segmentIndex++;
+            } catch (error) {
+              console.error('Error processing segment:', error);
+            }
           }
         };
         
         // Handle stop event
-        mediaRecorder.onstop = async () => {
-          console.log('MediaRecorder stopped, processing data...');
-          
-          try {
-            // Create a blob from all chunks
-            const blob = new Blob(recordedChunks, { type: selectedMimeType });
-            console.log('Blob created, size:', blob.size);
-            
-            // Convert blob to array buffer
-            const arrayBuffer = await blob.arrayBuffer();
-            console.log('Array buffer created, size:', arrayBuffer.byteLength);
-            
-            // Send data to main process
-            ipcRenderer.send('recording-data', { 
-              buffer: arrayBuffer,
-              mimeType: selectedMimeType
-            });
+        mediaRecorder.onstop = () => {
+          console.log('MediaRecorder stopped');
             
             // Notify main process that recording is complete
             ipcRenderer.send('recording-complete');
             
             // Stop all tracks
             stream.getTracks().forEach(track => track.stop());
-          } catch (error) {
-            console.error('Error processing recording:', error);
-          }
         };
         
-        // Start recording with 1-second chunks
-        mediaRecorder.start(1000);
-        console.log('Recording started');
+        // Start recording with 10-minute segments (600000 ms)
+        // For testing, you can use a shorter interval like 10 seconds (10000 ms)
+        mediaRecorder.start(10000); // 10 seconds for testing
+        console.log('Recording started with 10-second segments');
       } catch (error) {
         console.error('Error starting recording:', error);
       }

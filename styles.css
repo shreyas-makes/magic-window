@@ -239,6 +239,141 @@ h1 {
   max-width: 100%;
 }
 
+/* Disk Space Section */
+.disk-space {
+  max-width: 600px;
+  margin: 30px auto;
+  padding: 20px;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.disk-space h2 {
+  margin-top: 0;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.disk-space-container {
+  margin-top: 15px;
+}
+
+.disk-space-bar {
+  height: 20px;
+  background-color: #e9ecef;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.disk-space-used {
+  height: 100%;
+  background-color: #3498db;
+  transition: width 0.5s ease;
+}
+
+.disk-space-used.warning {
+  background-color: #f39c12;
+}
+
+.disk-space-used.critical {
+  background-color: #e74c3c;
+}
+
+.disk-space-info {
+  font-size: 14px;
+  color: #6c757d;
+  text-align: right;
+}
+
+/* Segment list styles */
+.segments-container {
+  margin: 15px 0;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+}
+
+.segments-container h4 {
+  margin-top: 0;
+  color: #495057;
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+
+.segment-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  background-color: white;
+}
+
+.segment-item {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.segment-item:last-child {
+  border-bottom: none;
+}
+
+.segment-name {
+  font-family: monospace;
+  flex: 1;
+  font-size: 13px;
+}
+
+.segment-size {
+  font-size: 12px;
+  color: #6c757d;
+  margin-right: 10px;
+}
+
+.play-segment-btn {
+  padding: 4px 8px;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.play-segment-btn:hover {
+  background-color: #218838;
+}
+
+.note {
+  font-size: 13px;
+  color: #6c757d;
+  margin: 10px 0;
+  padding: 8px;
+  background-color: #fff3cd;
+  border: 1px solid #ffeeba;
+  border-radius: 4px;
+}
+
+.error-message {
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  padding: 8px;
+  margin: 10px 0;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+#recordingMessage.warning {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+}
+
 /* Timer Display */
 .timer {
   font-family: monospace;
