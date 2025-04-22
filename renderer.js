@@ -9,7 +9,7 @@ let mediaRecorder = null; // MediaRecorder instance
 let recordedChunks = []; // Array to hold recorded chunks
 let sourceVideo = null; // Source video element
 let canvasStream = null; // Stream from canvas
-let usePixi = true; // Whether to use PIXI.js or fallback to canvas API
+let usePixi = false; // Whether to use PIXI.js or fallback to canvas API
 let canvasContext = null; // Canvas 2D context (for fallback renderer)
 let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
 
@@ -31,6 +31,13 @@ function formatTime(seconds) {
   return [hours, minutes, secs]
     .map(val => val.toString().padStart(2, '0'))
     .join(':');
+}
+
+// Debug logging function with optional condition to reduce console noise
+function debugLog(message, condition = true) {
+  if (condition) {
+    console.log(`[DEBUG] ${message}`);
+  }
 }
 
 // Function to start the timer
@@ -169,10 +176,38 @@ function initializePixi() {
       throw new Error('Canvas element not found');
     }
     
+    // Get video element
+    sourceVideo = document.getElementById('source-video');
+    if (!sourceVideo) {
+      throw new Error('Source video element not found');
+    }
+    
     // Set canvas size to match desired dimensions (4K)
     canvasElement.width = 3840;
     canvasElement.height = 2160;
     
+    // Log actual display size vs internal resolution
+    console.log(`Canvas display size: ${canvasElement.clientWidth}x${canvasElement.clientHeight}`);
+    console.log(`Canvas internal resolution: ${canvasElement.width}x${canvasElement.height}`);
+    
+    // First try to initialize Canvas 2D as fallback
+    try {
+      console.log('Trying to initialize Canvas 2D context first');
+      canvasContext = canvasElement.getContext('2d', { willReadFrequently: true });
+      
+      if (!canvasContext) {
+        console.error('Failed to get 2D context - this is unusual');
+      } else {
+        console.log('Canvas 2D context initialized successfully');
+        // Fill with black initially
+        canvasContext.fillStyle = '#000000';
+        canvasContext.fillRect(0, 0, canvasElement.width, canvasElement.height);
+      }
+    } catch (canvas2dError) {
+      console.error('Error initializing 2D context:', canvas2dError);
+    }
+    
+    // Try to initialize PIXI
     try {
       // Create a new PIXI Application with compatibility options
       const options = {
@@ -182,7 +217,8 @@ function initializePixi() {
         backgroundColor: 0x000000,
         resolution: 1,
         autoDensity: true,
-        antialias: false // Better performance without antialiasing
+        antialias: false, // Better performance without antialiasing
+        forceCanvas: true // Force Canvas renderer for better compatibility
       };
       
       // Create the application
@@ -193,47 +229,37 @@ function initializePixi() {
       
       // PIXI initialization was successful
       usePixi = true;
+      console.log('PIXI.js initialized successfully');
     } catch (pixiError) {
       console.error('Error initializing PIXI.js:', pixiError);
       console.log('Falling back to regular Canvas 2D rendering');
       
       // Fallback to Canvas 2D API
       usePixi = false;
-      canvasContext = canvasElement.getContext('2d');
-      if (!canvasContext) {
-        throw new Error('Could not get 2D context from canvas');
-      }
       
-      console.log('Canvas 2D context initialized successfully');
-    }
-    
-    // Get video element
-    sourceVideo = document.getElementById('source-video');
-    if (!sourceVideo) {
-      throw new Error('Source video element not found');
-    }
-    
-    // If using PIXI, configure the ticker
-    if (usePixi) {
-      try {
-        // Try to set FPS (compatible with newer Pixi.js versions)
-        if (app.ticker && typeof app.ticker.maxFPS !== 'undefined') {
-          app.ticker.maxFPS = 60;
-        } 
-        // For older versions, adjust the update frequency
-        else if (app.ticker && app.ticker.update) {
-          // Use the default ticker settings
-          app.ticker.autoStart = true;
-          app.ticker.shared.autoStart = true;
+      // Check if we already have a valid 2D context
+      if (!canvasContext) {
+        console.log('Attempting to get 2D context again');
+        try {
+          canvasContext = canvasElement.getContext('2d');
+          if (!canvasContext) {
+            throw new Error('Could not get 2D context from canvas');
+          }
+          console.log('Canvas 2D context initialized on second attempt');
+        } catch (secondAttemptError) {
+          console.error('Failed to get 2D context on second attempt:', secondAttemptError);
+          throw new Error('Could not initialize any rendering method');
         }
-      } catch (tickerError) {
-        console.warn('Non-critical error configuring ticker:', tickerError);
-        // Continue anyway since this is not critical
       }
+    }
+    
+    // If using Canvas 2D, set up the render loop immediately
+    if (!usePixi && canvasContext) {
+      console.log('Setting up Canvas 2D render loop');
+      initializeCanvas2DRenderingLoop();
     }
     
     console.log(`${usePixi ? 'Pixi.js' : 'Canvas 2D'} initialized successfully`);
-    
     return true;
   } catch (error) {
     console.error('Error initializing rendering:', error);
@@ -245,18 +271,121 @@ function initializePixi() {
 function initializeCanvas2DRenderingLoop() {
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
+    console.log('Cancelled previous animation frame');
   }
+  
+  // Source cropping region (default to full frame)
+  const cropRegion = {
+    enabled: false,
+    x: 0,
+    y: 0,
+    width: 0, // Will be set to video width
+    height: 0 // Will be set to video height
+  };
+  
+  // Add crop region controls to the canvas container
+  addCropControls(cropRegion);
   
   // Simple render loop to draw video to canvas
   function render() {
     if (sourceVideo && canvasContext) {
-      // Draw video frame to canvas
-      canvasContext.drawImage(
-        sourceVideo, 
-        0, 0, 
-        canvasContext.canvas.width, 
-        canvasContext.canvas.height
-      );
+      try {
+        // Log dimensions and scaling occasionally to help debug issues
+        const shouldLogDebug = Math.random() < 0.005; // Less frequent to reduce console spam
+        
+        // Only log occasionally to avoid flooding the console
+        if (Math.random() < 0.01) {
+          console.log("Rendering frame to canvas:", sourceVideo.videoWidth, "x", sourceVideo.videoHeight);
+        }
+        
+        // Clear the canvas first
+        canvasContext.fillStyle = '#000000';
+        canvasContext.fillRect(0, 0, canvasContext.canvas.width, canvasContext.canvas.height);
+        
+        // Check if video has dimensions and is not paused
+        if (sourceVideo.videoWidth > 0 && sourceVideo.videoHeight > 0 && !sourceVideo.paused) {
+          // Use the full canvas dimensions
+          const canvasWidth = canvasContext.canvas.width;
+          const canvasHeight = canvasContext.canvas.height;
+          
+          if (shouldLogDebug) {
+            debugLog(`Canvas: ${canvasWidth}x${canvasHeight}, Video: ${sourceVideo.videoWidth}x${sourceVideo.videoHeight}`);
+          }
+          
+          // Save canvas state
+          canvasContext.save();
+          
+          // Calculate scale to fill the canvas while maintaining aspect ratio
+          const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
+          const canvasRatio = canvasWidth / canvasHeight;
+          
+          let scale, offsetX = 0, offsetY = 0;
+          
+          if (videoRatio > canvasRatio) {
+            // Video is wider than canvas (relative to height)
+            scale = canvasHeight / sourceVideo.videoHeight;
+            offsetX = (canvasWidth - sourceVideo.videoWidth * scale) / 2;
+            if (shouldLogDebug) debugLog(`Scaling based on height: ${scale}`);
+          } else {
+            // Video is taller than canvas (relative to width)
+            scale = canvasWidth / sourceVideo.videoWidth;
+            offsetY = (canvasHeight - sourceVideo.videoHeight * scale) / 2;
+            if (shouldLogDebug) debugLog(`Scaling based on width: ${scale}`);
+          }
+          
+          // Apply base transformations to center and scale the video
+          canvasContext.translate(canvasWidth / 2, canvasHeight / 2);
+          
+          // Apply zoom if needed (multiply by the base scale)
+          const finalScale = scale * zoomLevel;
+          canvasContext.scale(finalScale, finalScale);
+          
+          if (shouldLogDebug) debugLog(`Final scale with zoom: ${finalScale}`);
+          
+          // Calculate proper offsets based on zoom center
+          const zoomCenterOffsetX = (zoomCenterX - sourceVideo.videoWidth / 2) * (zoomLevel > 1 ? 1 : 0);
+          const zoomCenterOffsetY = (zoomCenterY - sourceVideo.videoHeight / 2) * (zoomLevel > 1 ? 1 : 0);
+          
+          if (shouldLogDebug && zoomLevel > 1) {
+            debugLog(`Zoom center offset: (${zoomCenterOffsetX}, ${zoomCenterOffsetY})`);
+          }
+          
+          // Update crop region dimensions if they're not set
+          if (cropRegion.width === 0 || cropRegion.height === 0) {
+            cropRegion.width = sourceVideo.videoWidth;
+            cropRegion.height = sourceVideo.videoHeight;
+          }
+          
+          // Draw video frame to canvas - use video's natural dimensions or crop region
+          if (cropRegion.enabled) {
+            canvasContext.drawImage(
+              sourceVideo, 
+              cropRegion.x, cropRegion.y, cropRegion.width, cropRegion.height,
+              -sourceVideo.videoWidth / 2 - zoomCenterOffsetX, 
+              -sourceVideo.videoHeight / 2 - zoomCenterOffsetY,
+              sourceVideo.videoWidth, sourceVideo.videoHeight
+            );
+          } else {
+            canvasContext.drawImage(
+              sourceVideo, 
+              0, 0, sourceVideo.videoWidth, sourceVideo.videoHeight,
+              -sourceVideo.videoWidth / 2 - zoomCenterOffsetX, 
+              -sourceVideo.videoHeight / 2 - zoomCenterOffsetY,
+              sourceVideo.videoWidth, sourceVideo.videoHeight
+            );
+          }
+          
+          // Restore canvas state
+          canvasContext.restore();
+          
+          // Debug drawing to show canvas boundaries (uncomment if needed)
+          // canvasContext.strokeStyle = 'red';
+          // canvasContext.lineWidth = 4;
+          // canvasContext.strokeRect(0, 0, canvasWidth, canvasHeight);
+        }
+      } catch (err) {
+        console.error("Error rendering video to canvas:", err);
+      }
     }
     
     // Continue the loop
@@ -266,6 +395,141 @@ function initializeCanvas2DRenderingLoop() {
   // Start the render loop
   animationFrameId = requestAnimationFrame(render);
   console.log('Canvas 2D rendering loop started');
+}
+
+// Function to add crop region controls
+function addCropControls(cropRegion) {
+  // Create crop controls container
+  const cropControlsContainer = document.createElement('div');
+  cropControlsContainer.className = 'crop-controls';
+  cropControlsContainer.innerHTML = `
+    <h3>Region Selection</h3>
+    <div class="control-row">
+      <label>
+        <input type="checkbox" id="enableCrop"> 
+        Enable Region Selection
+      </label>
+    </div>
+    <div class="control-group">
+      <div class="control-row">
+        <label>X: <input type="number" id="cropX" min="0" value="0"></label>
+        <label>Y: <input type="number" id="cropY" min="0" value="0"></label>
+      </div>
+      <div class="control-row">
+        <label>Width: <input type="number" id="cropWidth" min="10" value="1920"></label>
+        <label>Height: <input type="number" id="cropHeight" min="10" value="1080"></label>
+      </div>
+    </div>
+    <button id="resetCrop" class="btn">Reset to Full</button>
+  `;
+  
+  // Add styles if they don't exist
+  if (!document.getElementById('crop-controls-styles')) {
+    const style = document.createElement('style');
+    style.id = 'crop-controls-styles';
+    style.textContent = `
+      .crop-controls {
+        max-width: 1200px;
+        margin: 20px auto;
+        padding: 15px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .crop-controls h3 {
+        margin-top: 0;
+        color: #2c3e50;
+        font-size: 16px;
+      }
+      .control-group {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid #eee;
+        border-radius: 4px;
+      }
+      .control-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .control-row label {
+        display: flex;
+        align-items: center;
+        font-size: 14px;
+      }
+      .control-row input[type="number"] {
+        width: 70px;
+        margin-left: 5px;
+        padding: 3px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+  
+  // Insert after zoom controls
+  const zoomControls = document.querySelector('.zoom-controls');
+  if (zoomControls && zoomControls.parentNode) {
+    zoomControls.parentNode.insertBefore(cropControlsContainer, zoomControls.nextSibling);
+  } else {
+    const body = document.querySelector('body');
+    body.appendChild(cropControlsContainer);
+  }
+  
+  // Add event listeners
+  const enableCropCheckbox = document.getElementById('enableCrop');
+  const cropXInput = document.getElementById('cropX');
+  const cropYInput = document.getElementById('cropY');
+  const cropWidthInput = document.getElementById('cropWidth');
+  const cropHeightInput = document.getElementById('cropHeight');
+  const resetCropButton = document.getElementById('resetCrop');
+  
+  // Enable/disable crop
+  enableCropCheckbox.addEventListener('change', (event) => {
+    cropRegion.enabled = event.target.checked;
+    console.log('Crop region enabled:', cropRegion.enabled);
+  });
+  
+  // Update X coordinate
+  cropXInput.addEventListener('change', (event) => {
+    cropRegion.x = parseInt(event.target.value) || 0;
+    console.log('Crop region X:', cropRegion.x);
+  });
+  
+  // Update Y coordinate
+  cropYInput.addEventListener('change', (event) => {
+    cropRegion.y = parseInt(event.target.value) || 0;
+    console.log('Crop region Y:', cropRegion.y);
+  });
+  
+  // Update width
+  cropWidthInput.addEventListener('change', (event) => {
+    cropRegion.width = parseInt(event.target.value) || 1920;
+    console.log('Crop region width:', cropRegion.width);
+  });
+  
+  // Update height
+  cropHeightInput.addEventListener('change', (event) => {
+    cropRegion.height = parseInt(event.target.value) || 1080;
+    console.log('Crop region height:', cropRegion.height);
+  });
+  
+  // Reset crop region
+  resetCropButton.addEventListener('click', () => {
+    if (sourceVideo) {
+      cropRegion.x = 0;
+      cropRegion.y = 0;
+      cropRegion.width = sourceVideo.videoWidth;
+      cropRegion.height = sourceVideo.videoHeight;
+      
+      // Update input values
+      cropXInput.value = cropRegion.x;
+      cropYInput.value = cropRegion.y;
+      cropWidthInput.value = cropRegion.width;
+      cropHeightInput.value = cropRegion.height;
+      
+      console.log('Crop region reset to full frame');
+    }
+  });
 }
 
 // Function to create source selection dialog
@@ -281,6 +545,9 @@ async function showSourceSelectionDialog() {
     dialog.innerHTML = `
       <div class="source-dialog">
         <h2>Select Source to Record</h2>
+        <div class="notice-box warning">
+          <strong>Warning:</strong> Avoid selecting the "Magic Window" application itself as this will cause a recursive display.
+        </div>
         <div class="source-grid" id="sourceGrid"></div>
         <div class="dialog-buttons">
           <button id="cancelSourceDialog" class="btn">Cancel</button>
@@ -322,6 +589,17 @@ async function showSourceSelectionDialog() {
           color: #2c3e50;
           text-align: center;
         }
+        .notice-box {
+          margin: 15px 0;
+          padding: 10px;
+          border-radius: 5px;
+          font-size: 14px;
+        }
+        .notice-box.warning {
+          background-color: #fff3cd;
+          border: 1px solid #ffeeba;
+          color: #856404;
+        }
         .source-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -340,6 +618,22 @@ async function showSourceSelectionDialog() {
           border-color: #3498db;
           background: #f8f9fa;
         }
+        .source-item.self-app {
+          border-color: #e74c3c;
+          background: #f8d7da;
+          position: relative;
+        }
+        .source-item.self-app::before {
+          content: "⚠️ This is Magic Window";
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          background: #e74c3c;
+          color: white;
+          font-size: 12px;
+          padding: 2px 0;
+        }
         .source-item img {
           width: 100%;
           height: auto;
@@ -353,6 +647,14 @@ async function showSourceSelectionDialog() {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
+        .source-type {
+          font-size: 12px;
+          color: #6c757d;
+          background: #e9ecef;
+          border-radius: 3px;
+          padding: 2px 5px;
+          display: inline-block;
+        }
         .dialog-buttons {
           text-align: center;
         }
@@ -365,14 +667,33 @@ async function showSourceSelectionDialog() {
     sources.forEach(source => {
       const sourceItem = document.createElement('div');
       sourceItem.className = 'source-item';
+      
+      // Check if this is the Magic Window app itself
+      const isSelfApp = source.name && (
+        source.name.includes('Magic Window') || 
+        source.name.includes('Electron')
+      );
+      
+      if (isSelfApp) {
+        sourceItem.className += ' self-app';
+      }
+      
+      const sourceType = source.id.includes('screen') ? 'Screen' : 'Window';
+      
       sourceItem.innerHTML = `
         <img src="${source.thumbnail}" alt="${source.name}">
         <p title="${source.name}">${source.name}</p>
+        <span class="source-type">${sourceType}</span>
       `;
       
       // Add click handler to select this source
       sourceItem.addEventListener('click', () => {
-        selectedSourceId = source.id;
+        // If this is the Magic Window app, show a confirmation
+        if (isSelfApp) {
+          if (!confirm('WARNING: You are selecting the Magic Window application itself. This will cause a recursive display. Are you sure you want to continue?')) {
+            return;
+          }
+        }
         
         // Remove dialog
         document.body.removeChild(dialog);
@@ -428,40 +749,101 @@ async function getSourceStream(sourceId) {
       throw new Error('No source selected');
     }
     
-    // Get the stream using the older navigator.mediaDevices.getUserMedia API
-    // which is better supported in Electron
+    // Try to check if the user selected the app itself
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: selectedId,
-            minWidth: 1920,
-            minHeight: 1080,
-            maxWidth: 3840,
-            maxHeight: 2160
+      // Get the sources to check if the user selected the app itself
+      const sources = await window.electronAPI.getScreenSources();
+      
+      if (sources && sources.length > 0) {
+        const selectedSource = sources.find(source => source.id === selectedId);
+        
+        // Check if the selected source is this application
+        if (selectedSource && selectedSource.name && 
+            (selectedSource.name.includes('Magic Window') || 
+             selectedSource.name.includes('Electron'))) {
+          const result = confirm(
+            'WARNING: You appear to be capturing the Magic Window application itself, ' +
+            'which may cause display recursion. It is recommended to capture a different ' +
+            'window or screen. Do you want to continue anyway?'
+          );
+          
+          if (!result) {
+            throw new Error('Source selection canceled');
           }
         }
-      });
-      
-      // Check if we have a valid video track
-      const videoTracks = stream.getVideoTracks();
-      if (videoTracks.length === 0) {
-        throw new Error('No video track in the captured stream');
       }
-      
-      // Log information about the captured stream
-      const videoTrack = videoTracks[0];
-      console.log('Video track:', videoTrack.label);
-      console.log('Track settings:', videoTrack.getSettings());
-      
-      console.log('Successfully obtained media stream');
-      return stream;
-    } catch (err) {
-      console.error('Failed to get media stream:', err);
-      throw err;
+    } catch (sourceCheckError) {
+      // If we can't check the source, just log and continue
+      console.warn('Could not check if selected source is the app itself:', sourceCheckError);
     }
+    
+    // Get the stream using the navigator.mediaDevices.getUserMedia API
+    // which is better supported in Electron
+    let streamAttempts = 0;
+    const maxAttempts = 3;
+    
+    while (streamAttempts < maxAttempts) {
+      try {
+        streamAttempts++;
+        console.log(`Attempt ${streamAttempts} to get stream for source ${selectedId}`);
+        
+        // Try main approach first with mandatory options
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: selectedId,
+                minWidth: 1280,
+                minHeight: 720
+              }
+            }
+          });
+          
+          // Check if we have a valid video track
+          const videoTracks = stream.getVideoTracks();
+          if (videoTracks.length === 0) {
+            throw new Error('No video track in the captured stream');
+          }
+          
+          // Log information about the captured stream
+          const videoTrack = videoTracks[0];
+          console.log('Video track:', videoTrack.label);
+          console.log('Track settings:', videoTrack.getSettings());
+          
+          console.log('Successfully obtained media stream');
+          return stream;
+        } catch (mandatoryError) {
+          console.warn('Error with mandatory constraints, trying alternative approach:', mandatoryError);
+          
+          // Try alternative approach with simpler constraints
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: selectedId
+              }
+            }
+          });
+          
+          console.log('Successfully obtained media stream with alternative constraints');
+          return stream;
+        }
+      } catch (err) {
+        console.error(`Stream attempt ${streamAttempts} failed:`, err);
+        
+        if (streamAttempts >= maxAttempts) {
+          throw err;
+        }
+        
+        // Wait a bit before trying again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    throw new Error('Failed to get media stream after multiple attempts');
   } catch (error) {
     console.error('Error getting source stream:', error);
     throw error;
@@ -472,16 +854,109 @@ async function getSourceStream(sourceId) {
 function setupCanvasRendering(stream) {
   try {
     console.log('Setting up canvas rendering with stream');
+    console.log('Stream object:', stream);
+    console.log('Stream active:', stream.active);
+    console.log('Video tracks:', stream.getVideoTracks().length);
+    
+    // Check stream tracks and log details
+    const streamVideoTracks = stream.getVideoTracks();
+    if (streamVideoTracks.length > 0) {
+      const settings = streamVideoTracks[0].getSettings();
+      debugLog(`Source video settings: ${settings.width}x${settings.height} (${settings.frameRate}fps)`);
+      debugLog(`Source video constraints:`, settings.width > 0);
+    }
+    
+    // Make sure source video exists
+    if (!sourceVideo) {
+      sourceVideo = document.getElementById('source-video');
+      if (!sourceVideo) {
+        throw new Error('Source video element not found');
+      }
+    }
+    
+    // Reset video element before setting new source
+    if (sourceVideo.srcObject) {
+      console.log('Resetting previous video source');
+      sourceVideo.srcObject = null;
+      sourceVideo.load();
+    }
+    
+    // Set basic video attributes for better playback
+    sourceVideo.autoplay = true;
+    sourceVideo.muted = true;
+    sourceVideo.playsInline = true;
+    sourceVideo.controls = false;
+    
+    // Check stream validity
+    if (!stream || !stream.active) {
+      console.error('Stream is not active or is invalid');
+      throw new Error('Invalid stream source');
+    }
+    
+    const videoTracks = stream.getVideoTracks();
+    if (videoTracks.length === 0) {
+      console.error('No video tracks in stream');
+      throw new Error('Stream has no video tracks');
+    }
     
     // Set the video source to the stream
     sourceVideo.srcObject = stream;
     console.log('Set stream to video element');
     
+    // Log video element properties
+    console.log('Video element:', sourceVideo);
+    console.log('Video ready state:', sourceVideo.readyState);
+    console.log('Video width/height:', sourceVideo.videoWidth, sourceVideo.videoHeight);
+    
+    // Handle metadata loaded event
     sourceVideo.onloadedmetadata = () => {
       console.log('Video metadata loaded, starting playback');
+      console.log('Video dimensions after metadata:', sourceVideo.videoWidth, sourceVideo.videoHeight);
+      
+      if (sourceVideo.videoWidth === 0 || sourceVideo.videoHeight === 0) {
+        console.warn('Warning: Video dimensions are zero after metadata loaded');
+      }
+      
       sourceVideo.play()
-        .then(() => console.log('Video playback started'))
-        .catch(err => console.error('Error starting video playback:', err));
+        .then(() => {
+          console.log('Video playback started');
+          console.log('Video is playing:', !sourceVideo.paused);
+          console.log('Video dimensions:', sourceVideo.videoWidth, sourceVideo.videoHeight);
+        })
+        .catch(err => {
+          console.error('Error starting video playback:', err);
+          
+          // Try playing again with a timeout and different settings
+          setTimeout(() => {
+            console.log('Retrying video playback after delay');
+            sourceVideo.muted = true; // Ensure muted to improve chances of autoplay
+            sourceVideo.playsInline = true;
+            sourceVideo.play()
+              .then(() => console.log('Video playback started on second attempt'))
+              .catch(secondErr => console.error('Failed to play video on second attempt:', secondErr));
+          }, 1000);
+        });
+    };
+    
+    // Add error event handlers
+    sourceVideo.onerror = (err) => {
+      console.error('Video element error:', err);
+      console.error('Video error details:', sourceVideo.error);
+    };
+    
+    // Add stalled event handler
+    sourceVideo.onstalled = () => {
+      console.warn('Video playback has stalled');
+      
+      // Try reloading the stream
+      try {
+        sourceVideo.load();
+        sourceVideo.play()
+          .then(() => console.log('Video playback resumed after stall'))
+          .catch(err => console.error('Failed to resume after stall:', err));
+      } catch (err) {
+        console.error('Error recovering from stall:', err);
+      }
     };
     
     // Wait for video to be ready
@@ -529,7 +1004,18 @@ function setupCanvasRendering(stream) {
       setTimeout(() => {
         if (!canvasStream) {
           console.error('Timeout waiting for video to play');
-          resolve(false);
+          
+          // Try one more time to start the video playback
+          console.log('Trying once more to start video playback');
+          sourceVideo.play()
+            .then(() => {
+              console.log('Video playback started after timeout');
+              sourceVideo.onplaying();
+            })
+            .catch(err => {
+              console.error('Failed to start video after timeout:', err);
+              resolve(false);
+            });
         }
       }, 5000);
     });
@@ -574,13 +1060,14 @@ async function setupPixiRendering() {
     const canvasWidth = app.view.width || app.renderer.width || 3840;
     const canvasHeight = app.view.height || app.renderer.height || 2160;
     
-    // Set sprite properties to fill the canvas
-    videoSprite.width = canvasWidth;
-    videoSprite.height = canvasHeight;
-    console.log(`Set video sprite dimensions: ${videoSprite.width}x${videoSprite.height}`);
+    // Calculate proper scaling to maintain aspect ratio and fill canvas
+    // Will be properly set in the ticker callback once video dimensions are available
     
-    // Center the sprite
-    videoSprite.position.set(0, 0);
+    // Set anchor to center for easier positioning and scaling
+    videoSprite.anchor.set(0.5, 0.5);
+    
+    // Position at center of canvas
+    videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
     
     // Add the sprite to the stage
     app.stage.addChild(videoSprite);
@@ -591,21 +1078,41 @@ async function setupPixiRendering() {
       console.log('Setting up ticker for texture updates');
       const tickerCallback = () => {
         // Just having the ticker active helps with updates
-        if (videoSprite && videoSprite.texture) {
+        if (videoSprite && videoSprite.texture && sourceVideo.videoWidth > 0) {
           // Force texture update if needed
           if (videoSprite.texture.baseTexture) {
             videoSprite.texture.baseTexture.update();
           }
           
-          // Apply zoom transformation
-          // Set the sprite's pivot point to the zoom center
-          videoSprite.pivot.set(zoomCenterX, zoomCenterY);
+          // Calculate scale to fill the canvas while maintaining aspect ratio
+          const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
+          const canvasRatio = canvasWidth / canvasHeight;
           
-          // Position the sprite so that the zoom center appears at the center of the canvas
-          videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
+          let scale;
+          if (videoRatio > canvasRatio) {
+            // Video is wider than canvas (relative to height)
+            scale = canvasHeight / sourceVideo.videoHeight;
+          } else {
+            // Video is taller than canvas (relative to width)
+            scale = canvasWidth / sourceVideo.videoWidth;
+          }
           
-          // Apply the zoom scale
-          videoSprite.scale.set(zoomLevel);
+          // Apply the calculated scale, multiplied by zoom level
+          videoSprite.scale.set(scale * zoomLevel);
+          
+          // Apply zoom center offset if zoomed in
+          if (zoomLevel > 1) {
+            // Calculate normalized zoom center (0-1 range)
+            const normalizedZoomX = (zoomCenterX / sourceVideo.videoWidth) - 0.5;
+            const normalizedZoomY = (zoomCenterY / sourceVideo.videoHeight) - 0.5;
+            
+            // Apply offset based on normalized positions multiplied by zoom factor
+            videoSprite.position.x = canvasWidth / 2 - (normalizedZoomX * sourceVideo.videoWidth * scale * (zoomLevel - 1));
+            videoSprite.position.y = canvasHeight / 2 - (normalizedZoomY * sourceVideo.videoHeight * scale * (zoomLevel - 1));
+          } else {
+            // Reset to center when not zoomed
+            videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
+          }
         }
       };
       
@@ -955,6 +1462,206 @@ function updateUIState(state) {
   }
 }
 
+// Function to get direct screen capture and display it in the canvas
+async function captureScreenDirectly() {
+  const recordingMessageEl = document.getElementById('recordingMessage');
+  
+  try {
+    // Show a loading message
+    recordingMessageEl.textContent = 'Attempting to capture screen directly...';
+    recordingMessageEl.className = 'pending';
+    
+    // Request direct screen capture from the main process
+    const captureResult = await window.electronAPI.captureScreenDirectly();
+    console.log('Direct screen capture successful:', captureResult);
+    
+    // Set the captured screenshot as the background of the canvas
+    const canvasElement = document.getElementById('main-canvas');
+    if (!canvasElement) {
+      throw new Error('Canvas element not found');
+    }
+    
+    if (!canvasContext) {
+      canvasContext = canvasElement.getContext('2d');
+      if (!canvasContext) {
+        throw new Error('Could not get 2D context from canvas');
+      }
+    }
+    
+    // Create an image from the thumbnail data URL
+    const img = new Image();
+    img.onload = () => {
+      // Draw the image on the canvas
+      canvasContext.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
+      console.log('Screenshot drawn to canvas');
+      
+      // Also show it in the video preview for debugging
+      if (sourceVideo) {
+        // Create a temporary canvas to use as video source
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 1280;
+        tempCanvas.height = 720;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // Convert the canvas to a MediaStream
+        try {
+          const stream = tempCanvas.captureStream(30);
+          sourceVideo.srcObject = stream;
+          sourceVideo.play()
+            .then(() => console.log('Video preview started with screenshot'))
+            .catch(err => console.error('Error starting video preview:', err));
+        } catch (streamErr) {
+          console.error('Error creating stream from canvas:', streamErr);
+        }
+      }
+      
+      // Update the status
+      recordingMessageEl.textContent = 'Screen captured successfully (Static Screenshot). Note: This is a workaround for screen recording permission issues.';
+      recordingMessageEl.className = 'success';
+    };
+    
+    img.onerror = (error) => {
+      console.error('Error loading image:', error);
+      recordingMessageEl.textContent = 'Error loading screenshot';
+      recordingMessageEl.className = 'error';
+    };
+    
+    // Set the image source to the thumbnail data URL
+    img.src = captureResult.thumbnail;
+    
+  } catch (error) {
+    console.error('Error capturing screen directly:', error);
+    recordingMessageEl.textContent = `Error capturing screen: ${error.message}. Please grant screen recording permission in System Settings.`;
+    recordingMessageEl.className = 'error';
+  }
+}
+
+// Function to create a simple test pattern and display it on the canvas
+function showTestPattern() {
+  const recordingMessageEl = document.getElementById('recordingMessage');
+  
+  try {
+    // Show a loading message
+    recordingMessageEl.textContent = 'Creating test pattern...';
+    recordingMessageEl.className = 'pending';
+    
+    // Get the canvas element and context
+    const canvasElement = document.getElementById('main-canvas');
+    if (!canvasElement) {
+      throw new Error('Canvas element not found');
+    }
+    
+    if (!canvasContext) {
+      canvasContext = canvasElement.getContext('2d');
+      if (!canvasContext) {
+        throw new Error('Could not get 2D context from canvas');
+      }
+    }
+    
+    // Create a simple gradient test pattern
+    const width = canvasElement.width;
+    const height = canvasElement.height;
+    
+    // Create linear gradient
+    const gradient = canvasContext.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, '#2980b9');
+    gradient.addColorStop(0.5, '#27ae60');
+    gradient.addColorStop(1, '#f39c12');
+    
+    // Fill background
+    canvasContext.fillStyle = gradient;
+    canvasContext.fillRect(0, 0, width, height);
+    
+    // Draw grid pattern
+    canvasContext.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    canvasContext.lineWidth = 1;
+    
+    // Draw horizontal lines
+    for (let y = 0; y < height; y += 100) {
+      canvasContext.beginPath();
+      canvasContext.moveTo(0, y);
+      canvasContext.lineTo(width, y);
+      canvasContext.stroke();
+    }
+    
+    // Draw vertical lines
+    for (let x = 0; x < width; x += 100) {
+      canvasContext.beginPath();
+      canvasContext.moveTo(x, 0);
+      canvasContext.lineTo(x, height);
+      canvasContext.stroke();
+    }
+    
+    // Draw text
+    canvasContext.fillStyle = 'white';
+    canvasContext.font = 'bold 48px Arial';
+    canvasContext.textAlign = 'center';
+    canvasContext.textBaseline = 'middle';
+    canvasContext.fillText('Magic Window Test Pattern', width / 2, height / 2);
+    
+    // Draw timestamp
+    const timestamp = new Date().toLocaleString();
+    canvasContext.font = '24px Arial';
+    canvasContext.fillText(timestamp, width / 2, height / 2 + 50);
+    
+    // Draw resolution text
+    canvasContext.font = '18px Arial';
+    canvasContext.fillText(`Resolution: ${width}x${height}`, width / 2, height / 2 + 90);
+    
+    // Update video preview
+    if (sourceVideo) {
+      try {
+        // Create a stream from the canvas
+        const stream = canvasElement.captureStream(30);
+        sourceVideo.srcObject = stream;
+        sourceVideo.play()
+          .then(() => console.log('Video preview started with test pattern'))
+          .catch(err => console.error('Error starting video preview:', err));
+      } catch (streamErr) {
+        console.error('Error creating stream from canvas:', streamErr);
+      }
+    }
+    
+    console.log('Test pattern drawn to canvas');
+    recordingMessageEl.textContent = 'Test pattern displayed successfully. Canvas is working correctly.';
+    recordingMessageEl.className = 'success';
+    
+  } catch (error) {
+    console.error('Error creating test pattern:', error);
+    recordingMessageEl.textContent = `Error creating test pattern: ${error.message}`;
+    recordingMessageEl.className = 'error';
+  }
+}
+
+// Add the button to the UI
+function addDirectCaptureButton() {
+  const container = document.querySelector('.recording-controls .button-group');
+  if (!container) return;
+  
+  // Create a new button
+  const directCaptureBtn = document.createElement('button');
+  directCaptureBtn.textContent = 'Capture Screen (macOS Fix)';
+  directCaptureBtn.className = 'btn warning';
+  directCaptureBtn.id = 'directCaptureBtn';
+  
+  // Add event listener
+  directCaptureBtn.addEventListener('click', captureScreenDirectly);
+  
+  // Add test pattern button
+  const testPatternBtn = document.createElement('button');
+  testPatternBtn.textContent = 'Show Test Pattern';
+  testPatternBtn.className = 'btn info';
+  testPatternBtn.id = 'testPatternBtn';
+  testPatternBtn.addEventListener('click', showTestPattern);
+  
+  // Add to container
+  container.appendChild(directCaptureBtn);
+  container.appendChild(testPatternBtn);
+  
+  console.log('Added direct capture button to UI');
+}
+
 // Function to initialize UI event handlers after DOM loaded
 window.addEventListener('DOMContentLoaded', async () => {
   // Initialize existing UI handlers
@@ -977,6 +1684,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     statusEl.textContent = 'Error initializing canvas rendering';
     statusEl.className = 'status error';
     return;
+  }
+  
+  // Add direct capture button for macOS users
+  if (navigator.platform.includes('Mac')) {
+    addDirectCaptureButton();
   }
   
   // Test initial communication

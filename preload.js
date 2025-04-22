@@ -46,11 +46,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getScreenSources: async () => {
     try {
       console.log('Called getScreenSources from preload');
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      // Check if desktopCapturer is available
+      if (!desktopCapturer) {
+        console.error('desktopCapturer is not available');
+        // Fall back to invoking through the main process
+        return ipcRenderer.invoke('getScreenSources');
+      }
+      
+      // Use desktopCapturer directly if available
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 150, height: 150 },
+        fetchWindowIcons: true
+      });
       console.log('Got screen sources:', sources.length);
       return sources;
     } catch (error) {
       console.error('Error in getScreenSources:', error);
+      // Fall back to invoking through the main process
+      console.log('Falling back to main process for screen sources');
+      return ipcRenderer.invoke('getScreenSources');
+    }
+  },
+  // Get screen capture directly from the main process (more reliable on macOS)
+  captureScreenDirectly: async () => {
+    try {
+      console.log('Requesting direct screen capture from main process');
+      return await ipcRenderer.invoke('captureScreenDirectly');
+    } catch (error) {
+      console.error('Error in captureScreenDirectly:', error);
       throw error;
     }
   },

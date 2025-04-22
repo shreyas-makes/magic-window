@@ -1,0 +1,19 @@
+---
+description: Working with any file that handles video scaling, particularly in renderer.js, recorder.html, or any file using canvas with PIXI.js
+globs: 
+alwaysApply: false
+---
+{
+  "description": "Maintain proper aspect ratio when scaling video/canvas elements in WebGL contexts",
+  "when": "Working with any file that handles video scaling, particularly in renderer.js, recorder.html, or any file using canvas with PIXI.js",
+  "rule": "When scaling video content to fit a canvas or display target:\n1. Calculate the correct scaling factor by comparing source and target aspect ratios\n2. Scale based on width OR height depending on which is more constraining\n3. Center the content on the canvas\n4. When applying zoom, ensure it's from the center point\n5. Validate the scaling works correctly by checking the console logs for video dimensions and scale factors",
+  "examples": [
+    {
+      "before": "// Incorrect scaling that crops video\nconst scale = targetWidth / sourceWidth;\napp.stage.scale.set(scale);\n// No centering logic",
+      "after": "// Correct scaling with aspect ratio preservation\nconst sourceAspect = sourceWidth / sourceHeight;\nconst targetAspect = targetWidth / targetHeight;\nlet scale;\n\nif (sourceAspect > targetAspect) {\n  // Source is wider - scale by width\n  scale = targetWidth / sourceWidth;\n} else {\n  // Source is taller - scale by height\n  scale = targetHeight / sourceHeight;\n}\n\n// Apply scale\napp.stage.scale.set(scale);\n\n// Center content\napp.stage.x = (targetWidth - sourceWidth * scale) / 2;\napp.stage.y = (targetHeight - sourceHeight * scale) / 2;\n\nconsole.log(`Source dimensions: ${sourceWidth}x${sourceHeight}, scale: ${scale}`);"
+    }
+  ],
+  "tags": ["hallucination", "bugfix", "pixi", "webgl", "aspect-ratio"],
+  "agentRequestType": "Agent requested",
+  "helpfulFor": "Implementing or fixing video display and rendering tasks where maintaining proper aspect ratio is critical for displaying the entire source video without cropping"
+}

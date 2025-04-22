@@ -536,8 +536,30 @@ function stopRecordingTimer() {
   }
 }
 
+// Function for setting up system permissions needed for screen capture
+function setupSystemCapabilities() {
+  if (process.platform === 'darwin') {
+    // On macOS, request screen recording permission
+    try {
+      // This will trigger the system permission dialog if needed
+      desktopCapturer.getSources({ types: ['screen'] })
+        .then(sources => {
+          console.log(`Found ${sources.length} screen sources during initial permission check`);
+        })
+        .catch(err => {
+          console.error('Error during initial screen capture permission check:', err);
+        });
+    } catch (error) {
+      console.error('Error setting up screen recording permissions:', error);
+    }
+  }
+}
+
 // Create window when app is ready
 app.whenReady().then(() => {
+  // Set up system capabilities (screen recording permissions)
+  setupSystemCapabilities();
+  
   createWindow();
   
   // Initialize save path
@@ -567,6 +589,22 @@ app.whenReady().then(() => {
       return sources;
     } catch (error) {
       console.error('Error getting sources:', error);
+      throw error;
+    }
+  });
+  
+  // Handle request for screen and window sources with thumbnails
+  ipcMain.handle('getScreenSources', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({ 
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 150, height: 150 },
+        fetchWindowIcons: true
+      });
+      console.log(`Found ${sources.length} screen sources from main process`);
+      return sources;
+    } catch (error) {
+      console.error('Error getting screen sources:', error);
       throw error;
     }
   });
@@ -1058,6 +1096,89 @@ app.whenReady().then(() => {
       }));
     } catch (error) {
       console.error('Error in captureDesktop handler:', error);
+      throw error;
+    }
+  });
+
+  // Function to create and show a screen capture notification
+  function showScreenCapturePermissionDialog() {
+    // Create a dialog to explain the permission requirements
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Screen Recording Permission Required',
+      message: 'Screen Recording Permission Required',
+      detail: 'Magic Window needs Screen Recording permission to capture your screen or windows.\n\n' +
+              'After clicking "Open System Settings", please:\n' +
+              '1. Allow permission for Electron (or Magic Window)\n' +
+              '2. Quit and restart the application\n\n' +
+              'NOTE: You may need to restart the app several times for macOS to properly recognize the permission.',
+      buttons: ['Open System Settings', 'Cancel'],
+      defaultId: 0
+    }).then(result => {
+      if (result.response === 0) {
+        // Open System Preferences directly to Screen Recording
+        if (process.platform === 'darwin') {
+          shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+        }
+      }
+    });
+  }
+
+  // Handle direct screen capture from main process
+  ipcMain.handle('captureScreenDirectly', async (event) => {
+    try {
+      console.log('Attempting direct screen capture from main process');
+      
+      // Get all available sources
+      const sources = await desktopCapturer.getSources({ 
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 1280, height: 720 }
+      });
+      
+      if (sources.length === 0) {
+        console.error('No screen sources found for direct capture');
+        showScreenCapturePermissionDialog();
+        throw new Error('No screen sources available');
+      }
+      
+      // Find the primary display/screen
+      let primarySource = sources.find(s => s.id.includes('screen:0:0'));
+      
+      // If not found, try alternate IDs
+      if (!primarySource) {
+        primarySource = sources.find(s => s.id.includes('screen:1:0'));
+      }
+      
+      // If still not found, just use the first screen
+      if (!primarySource) {
+        primarySource = sources.find(s => s.id.includes('screen:'));
+      }
+      
+      // If no screens, try any available source
+      if (!primarySource && sources.length > 0) {
+        primarySource = sources[0];
+      }
+      
+      if (!primarySource) {
+        console.error('Could not find a suitable screen to capture');
+        showScreenCapturePermissionDialog();
+        throw new Error('No suitable screen source found');
+      }
+      
+      console.log(`Selected source for direct capture: ${primarySource.id} (${primarySource.name})`);
+      
+      // Extract the thumbnail data as a base64 string
+      const thumbnailDataUrl = primarySource.thumbnail.toDataURL();
+      
+      // Return the source ID and the thumbnail
+      return {
+        sourceId: primarySource.id,
+        name: primarySource.name,
+        thumbnail: thumbnailDataUrl
+      };
+    } catch (error) {
+      console.error('Error in direct screen capture:', error);
+      showScreenCapturePermissionDialog();
       throw error;
     }
   });
