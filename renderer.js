@@ -2,6 +2,10 @@
 // Import path module from Node.js through the preload script
 const path = { sep: '/' }; // Simple path separator for use in the renderer
 
+// Import GSAP for smooth animations
+import gsap from 'gsap';
+import { FXAAFilter } from '@pixi/filter-fxaa';
+
 // Canvas and recording variables
 let app = null; // PIXI application
 let videoSprite = null; // PIXI sprite for video
@@ -13,10 +17,19 @@ let usePixi = false; // Whether to use PIXI.js or fallback to canvas API
 let canvasContext = null; // Canvas 2D context (for fallback renderer)
 let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
 
-// Zoom variables
-let zoomLevel = 1.0; // Default zoom level
-let zoomCenterX = 1920; // Default center X (assuming 3840x2160 canvas)
-let zoomCenterY = 1080; // Default center Y (assuming 3840x2160 canvas)
+// Zoom state management
+const state = {
+    currentZoom: 1.0,
+    currentCenterX: 1920,
+    currentCenterY: 1080,
+    targetZoom: 1.0,
+    targetCenterX: 1920,
+    targetCenterY: 1080
+};
+
+// FXAA filter state
+let fxaaFilter = null;
+let fxaaEnabled = false;
 
 // Timer variables
 let timerInterval = null;
@@ -283,7 +296,7 @@ function initializeCanvas2DRenderingLoop() {
     height: 0 // Will be set to video height
   };
   
-  // Add crop region controls to the canvas container
+  // Add crop region controls to the canvas containers
   addCropControls(cropRegion);
   
   // Simple render loop to draw video to canvas
@@ -337,16 +350,16 @@ function initializeCanvas2DRenderingLoop() {
           canvasContext.translate(canvasWidth / 2, canvasHeight / 2);
           
           // Apply zoom if needed (multiply by the base scale)
-          const finalScale = scale * zoomLevel;
+          const finalScale = scale * state.currentZoom;
           canvasContext.scale(finalScale, finalScale);
           
           if (shouldLogDebug) debugLog(`Final scale with zoom: ${finalScale}`);
           
           // Calculate proper offsets based on zoom center
-          const zoomCenterOffsetX = (zoomCenterX - sourceVideo.videoWidth / 2) * (zoomLevel > 1 ? 1 : 0);
-          const zoomCenterOffsetY = (zoomCenterY - sourceVideo.videoHeight / 2) * (zoomLevel > 1 ? 1 : 0);
+          const zoomCenterOffsetX = (state.currentCenterX / sourceVideo.videoWidth) - 0.5;
+          const zoomCenterOffsetY = (state.currentCenterY / sourceVideo.videoHeight) - 0.5;
           
-          if (shouldLogDebug && zoomLevel > 1) {
+          if (shouldLogDebug && state.currentZoom > 1) {
             debugLog(`Zoom center offset: (${zoomCenterOffsetX}, ${zoomCenterOffsetY})`);
           }
           
@@ -1025,129 +1038,187 @@ function setupCanvasRendering(stream) {
   }
 }
 
-// Function to setup PIXI.js rendering
-async function setupPixiRendering() {
-  try {
-    console.log('Setting up PIXI rendering');
+// Function to smoothly transition zoom and position
+function setZoom(level, centerX, centerY, duration = 0.3) {
+    state.targetZoom = level;
+    state.targetCenterX = centerX;
+    state.targetCenterY = centerY;
     
-    // Make sure we have a valid app instance
-    if (!app) {
-      throw new Error('Pixi application not initialized');
-    }
+    gsap.to(state, {
+        currentZoom: level,
+        currentCenterX: centerX,
+        currentCenterY: centerY,
+        duration: duration,
+        ease: 'power2.out'
+    });
+}
+
+// Function to toggle FXAA
+function toggleFXAA() {
+    if (!videoSprite || !usePixi) return;
     
-    // Clear the stage if we had a previous sprite
-    if (videoSprite) {
-      console.log('Removing previous video sprite');
-      app.stage.removeChild(videoSprite);
-      videoSprite.destroy();
-    }
+    fxaaEnabled = !fxaaEnabled;
     
-    // Create a texture from the video element
-    console.log('Creating video texture');
-    const videoTexture = PIXI.Texture.from(sourceVideo);
-    
-    // Explicitly set update properties on the texture
-    videoTexture.baseTexture.autoUpdate = true;
-    if (videoTexture.baseTexture.resource) {
-      videoTexture.baseTexture.resource.autoPlay = true;
-    }
-    
-    console.log('Creating sprite from texture');
-    // Create a sprite from the texture
-    videoSprite = new PIXI.Sprite(videoTexture);
-    
-    // Get canvas dimensions - compatible with all PIXI versions
-    const canvasWidth = app.view.width || app.renderer.width || 3840;
-    const canvasHeight = app.view.height || app.renderer.height || 2160;
-    
-    // Calculate proper scaling to maintain aspect ratio and fill canvas
-    // Will be properly set in the ticker callback once video dimensions are available
-    
-    // Set anchor to center for easier positioning and scaling
-    videoSprite.anchor.set(0.5, 0.5);
-    
-    // Position at center of canvas
-    videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
-    
-    // Add the sprite to the stage
-    app.stage.addChild(videoSprite);
-    
-    // Set up a ticker to ensure the texture updates
-    // This helps with video rendering performance
-    try {
-      console.log('Setting up ticker for texture updates');
-      const tickerCallback = () => {
-        // Just having the ticker active helps with updates
-        if (videoSprite && videoSprite.texture && sourceVideo.videoWidth > 0) {
-          // Force texture update if needed
-          if (videoSprite.texture.baseTexture) {
-            videoSprite.texture.baseTexture.update();
-          }
-          
-          // Calculate scale to fill the canvas while maintaining aspect ratio
-          const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
-          const canvasRatio = canvasWidth / canvasHeight;
-          
-          let scale;
-          if (videoRatio > canvasRatio) {
-            // Video is wider than canvas (relative to height)
-            scale = canvasHeight / sourceVideo.videoHeight;
-          } else {
-            // Video is taller than canvas (relative to width)
-            scale = canvasWidth / sourceVideo.videoWidth;
-          }
-          
-          // Apply the calculated scale, multiplied by zoom level
-          videoSprite.scale.set(scale * zoomLevel);
-          
-          // Apply zoom center offset if zoomed in
-          if (zoomLevel > 1) {
-            // Calculate normalized zoom center (0-1 range)
-            const normalizedZoomX = (zoomCenterX / sourceVideo.videoWidth) - 0.5;
-            const normalizedZoomY = (zoomCenterY / sourceVideo.videoHeight) - 0.5;
-            
-            // Apply offset based on normalized positions multiplied by zoom factor
-            videoSprite.position.x = canvasWidth / 2 - (normalizedZoomX * sourceVideo.videoWidth * scale * (zoomLevel - 1));
-            videoSprite.position.y = canvasHeight / 2 - (normalizedZoomY * sourceVideo.videoHeight * scale * (zoomLevel - 1));
-          } else {
-            // Reset to center when not zoomed
-            videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
-          }
+    if (fxaaEnabled) {
+        if (!fxaaFilter) {
+            fxaaFilter = new FXAAFilter();
         }
-      };
-      
-      // Add the ticker callback using a method that works with different Pixi versions
-      if (app.ticker && app.ticker.add) {
-        app.ticker.add(tickerCallback);
-        console.log('Added ticker callback to app.ticker');
-      } else if (PIXI.Ticker && PIXI.Ticker.shared) {
-        PIXI.Ticker.shared.add(tickerCallback);
-        console.log('Added ticker callback to PIXI.Ticker.shared');
-      } else {
-        // Fallback to requestAnimationFrame if ticker is not available
-        console.log('Using requestAnimationFrame fallback for updates');
-        const animate = () => {
-          tickerCallback();
-          requestAnimationFrame(animate);
-        };
-        requestAnimationFrame(animate);
-      }
-    } catch (tickerError) {
-      console.warn('Non-critical error setting up ticker:', tickerError);
-      // Continue anyway as this is not critical
+        videoSprite.filters = [fxaaFilter];
+    } else {
+        videoSprite.filters = [];
     }
-    
-    // Get the canvas stream for recording
-    console.log('Getting stream from canvas');
-    const canvasElement = document.getElementById('main-canvas');
-    canvasStream = canvasElement.captureStream(60);
-    
-    console.log('PIXI.js rendering setup complete');
-    return true;
-  } catch (error) {
-    console.error('Error setting up PIXI rendering:', error);
-    throw error;
-  }
+}
+
+// Update setupPixiRendering to include FXAA setup and FPS monitoring
+async function setupPixiRendering() {
+    try {
+        console.log('Setting up PIXI rendering');
+        
+        // Make sure we have a valid app instance
+        if (!app) {
+            throw new Error('Pixi application not initialized');
+        }
+        
+        // Clear the stage if we had a previous sprite
+        if (videoSprite) {
+            console.log('Removing previous video sprite');
+            app.stage.removeChild(videoSprite);
+            videoSprite.destroy();
+        }
+        
+        // Create a texture from the video element
+        console.log('Creating video texture');
+        const videoTexture = PIXI.Texture.from(sourceVideo);
+        
+        // Explicitly set update properties on the texture
+        videoTexture.baseTexture.autoUpdate = true;
+        if (videoTexture.baseTexture.resource) {
+            videoTexture.baseTexture.resource.autoPlay = true;
+        }
+        
+        console.log('Creating sprite from texture');
+        // Create a sprite from the texture
+        videoSprite = new PIXI.Sprite(videoTexture);
+        
+        // Get canvas dimensions - compatible with all PIXI versions
+        const canvasWidth = app.view.width || app.renderer.width || 3840;
+        const canvasHeight = app.view.height || app.renderer.height || 2160;
+        
+        // Calculate proper scaling to maintain aspect ratio and fill canvas
+        // Will be properly set in the ticker callback once video dimensions are available
+        
+        // Set anchor to center for easier positioning and scaling
+        videoSprite.anchor.set(0.5, 0.5);
+        
+        // Position at center of canvas
+        videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
+        
+        // Add the sprite to the stage
+        app.stage.addChild(videoSprite);
+        
+        // Initialize FXAA filter if enabled
+        if (fxaaEnabled && !fxaaFilter) {
+            fxaaFilter = new FXAAFilter();
+            videoSprite.filters = [fxaaFilter];
+        }
+        
+        // Set up the animation loop
+        let lastTime = performance.now();
+        let frameCount = 0;
+        const fpsUpdateInterval = 1000; // Update FPS every second
+
+        const tickerCallback = () => {
+            // Update frame counter
+            frameCount++;
+            const currentTime = performance.now();
+            const elapsed = currentTime - lastTime;
+
+            // Calculate and log FPS every second
+            if (elapsed >= fpsUpdateInterval) {
+                const fps = Math.round((frameCount * 1000) / elapsed);
+                if (fps < 59) {
+                    console.warn('FPS dropped:', fps);
+                }
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+
+            // Update video texture
+            if (videoSprite && videoSprite.texture && sourceVideo.videoWidth > 0) {
+                // Force texture update if needed
+                if (videoSprite.texture.baseTexture) {
+                    videoSprite.texture.baseTexture.update();
+                }
+
+                // Calculate scale to fill the canvas while maintaining aspect ratio
+                const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
+                const canvasRatio = canvasWidth / canvasHeight;
+
+                let scale;
+                if (videoRatio > canvasRatio) {
+                    // Video is wider than canvas (relative to height)
+                    scale = canvasHeight / sourceVideo.videoHeight;
+                } else {
+                    // Video is taller than canvas (relative to width)
+                    scale = canvasWidth / sourceVideo.videoWidth;
+                }
+
+                // Apply the calculated scale, multiplied by zoom level
+                videoSprite.scale.set(scale * state.currentZoom);
+
+                // Apply zoom center offset if zoomed in
+                if (state.currentZoom > 1) {
+                    // Calculate normalized zoom center (0-1 range)
+                    const normalizedZoomX = (state.currentCenterX / sourceVideo.videoWidth) - 0.5;
+                    const normalizedZoomY = (state.currentCenterY / sourceVideo.videoHeight) - 0.5;
+
+                    // Apply offset based on normalized positions multiplied by zoom factor
+                    videoSprite.position.x = canvasWidth / 2 - (normalizedZoomX * sourceVideo.videoWidth * scale * (state.currentZoom - 1));
+                    videoSprite.position.y = canvasHeight / 2 - (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1));
+                } else {
+                    // Reset to center when not zoomed
+                    videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
+                }
+            }
+        };
+
+        // Add the ticker callback
+        if (app.ticker && app.ticker.add) {
+            app.ticker.add(tickerCallback);
+            console.log('Added ticker callback to app.ticker');
+        } else if (PIXI.Ticker && PIXI.Ticker.shared) {
+            PIXI.Ticker.shared.add(tickerCallback);
+            console.log('Added ticker callback to PIXI.Ticker.shared');
+        } else {
+            // Fallback to requestAnimationFrame if ticker is not available
+            console.log('Using requestAnimationFrame fallback for updates');
+            const animate = () => {
+                tickerCallback();
+                requestAnimationFrame(animate);
+            };
+            requestAnimationFrame(animate);
+        }
+
+        // Add FXAA toggle button
+        const fxaaToggle = document.createElement('button');
+        fxaaToggle.textContent = 'Toggle FXAA';
+        fxaaToggle.style.position = 'absolute';
+        fxaaToggle.style.bottom = '10px';
+        fxaaToggle.style.right = '10px';
+        fxaaToggle.addEventListener('click', toggleFXAA);
+        document.body.appendChild(fxaaToggle);
+
+        // Get the canvas stream for recording
+        console.log('Getting stream from canvas');
+        const canvasElement = document.getElementById('main-canvas');
+        canvasStream = canvasElement.captureStream(60);
+        
+        console.log('PIXI.js rendering setup complete');
+        return true;
+    } catch (error) {
+        console.error('Error in setupPixiRendering:', error);
+        return false;
+    }
 }
 
 // Function to setup Canvas 2D rendering (fallback)
@@ -1963,44 +2034,38 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 // Function to initialize zoom control buttons
 function initializeZoomControls() {
-  // Get zoom control buttons
-  const zoomInButton = document.getElementById('zoomIn');
-  const zoomOutButton = document.getElementById('zoomOut');
-  const moveTopLeftButton = document.getElementById('moveTopLeft');
-  const moveCenterButton = document.getElementById('moveCenter');
-  
-  // Add click event listeners
-  if (zoomInButton) {
-    zoomInButton.addEventListener('click', () => {
-      zoomLevel = 2.0; // Set zoom to 2x
-      console.log('Zoom in to 2x');
-    });
-  }
-  
-  if (zoomOutButton) {
-    zoomOutButton.addEventListener('click', () => {
-      zoomLevel = 1.0; // Reset zoom to 1x
-      console.log('Reset zoom to 1x');
-    });
-  }
-  
-  if (moveTopLeftButton) {
-    moveTopLeftButton.addEventListener('click', () => {
-      // Move to top-left quarter (assuming 3840x2160 canvas)
-      zoomCenterX = 960; // 1/4 of the width 
-      zoomCenterY = 540; // 1/4 of the height
-      console.log('Moved to top-left quarter');
-    });
-  }
-  
-  if (moveCenterButton) {
-    moveCenterButton.addEventListener('click', () => {
-      // Move back to center (assuming 3840x2160 canvas)
-      zoomCenterX = 1920; // Half of the width
-      zoomCenterY = 1080; // Half of the height
-      console.log('Moved to center');
-    });
-  }
+    const zoomInButton = document.getElementById('zoom-in');
+    const zoomOutButton = document.getElementById('zoom-out');
+    const moveTopLeftButton = document.getElementById('move-top-left');
+    const moveCenterButton = document.getElementById('move-center');
+
+    if (zoomInButton) {
+        zoomInButton.addEventListener('click', () => {
+            setZoom(2.0, state.currentCenterX, state.currentCenterY);
+            console.log('Zoom in to 2x');
+        });
+    }
+
+    if (zoomOutButton) {
+        zoomOutButton.addEventListener('click', () => {
+            setZoom(1.0, 1920, 1080); // Reset to center when zooming out
+            console.log('Reset zoom to 1x');
+        });
+    }
+
+    if (moveTopLeftButton) {
+        moveTopLeftButton.addEventListener('click', () => {
+            setZoom(state.currentZoom, 960, 540);
+            console.log('Moved to top-left quarter');
+        });
+    }
+
+    if (moveCenterButton) {
+        moveCenterButton.addEventListener('click', () => {
+            setZoom(state.currentZoom, 1920, 1080);
+            console.log('Moved to center');
+        });
+    }
 }
 
 // After the DOMContentLoaded block, add global keyboard shortcut

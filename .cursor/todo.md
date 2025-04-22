@@ -62,23 +62,23 @@ Phase 2: UI & Basic Controls
 
 
 Phase 3/4: Zoom Engine & Rendering
-[ ] Step 7: WebGL Canvas Setup & Frame Rendering
-[ ] Install pixi.js
-[ ] Add <canvas id="main-canvas"> (4K size, CSS scaled) and invisible <video id="source-video"> to index.html
-[ ] Set up PIXI.Application attached to canvas in renderer.js
-[ ] Modify renderer to get MediaStream via getUserMedia using source ID
-[ ] Set stream as srcObject for invisible video element
-[ ] Create PIXI.Texture and PIXI.Sprite from video, add sprite to Pixi stage
-[ ] Get output stream from canvas (canvas.captureStream(60))
-[ ] Refactor: Move MediaRecorder instantiation and ondataavailable handling to renderer.js, using the canvasStream
-[ ] Create new IPC channel ('sendBlobChunk') for renderer to send Blob data to main
-[ ] Modify main process to receive chunks via IPC and save them as segments
-[ ] Adapt main process Start/Stop logic to be triggered by renderer IPC calls
-[ ] Step 8: Basic Digital Zoom
-[ ] Add state variables in renderer: zoomLevel, zoomCenterX, zoomCenterY
-[ ] In Pixi update loop (app.ticker), apply videoSprite.scale, videoSprite.pivot, videoSprite.position based on state variables
-[ ] Add temporary buttons/keys in renderer to test changing zoom state
-[ ] Verify recorded output reflects the zoom seen on canvas
+[x] Step 7: WebGL Canvas Setup & Frame Rendering
+[x] Install pixi.js
+[x] Add <canvas id="main-canvas"> (4K size, CSS scaled) and invisible <video id="source-video"> to index.html
+[x] Set up PIXI.Application attached to canvas in renderer.js
+[x] Modify renderer to get MediaStream via getUserMedia using source ID
+[x] Set stream as srcObject for invisible video element
+[x] Create PIXI.Texture and PIXI.Sprite from video, add sprite to Pixi stage
+[x] Get output stream from canvas (canvas.captureStream(60))
+[x] Refactor: Move MediaRecorder instantiation and ondataavailable handling to renderer.js, using the canvasStream
+[x] Create new IPC channel ('sendBlobChunk') for renderer to send Blob data to main
+[x] Modify main process to receive chunks via IPC and save them as segments
+[x] Adapt main process Start/Stop logic to be triggered by renderer IPC calls
+[x] Step 8: Basic Digital Zoom
+[x] Add state variables in renderer: zoomLevel, zoomCenterX, zoomCenterY
+[x] In Pixi update loop (app.ticker), apply videoSprite.scale, videoSprite.pivot, videoSprite.position based on state variables
+[x] Add temporary buttons/keys in renderer to test changing zoom state
+[x] Verify recorded output reflects the zoom seen on canvas
 [ ] Step 9: Smooth Transitions & Advanced Filtering
 [ ] Install gsap
 [ ] Refactor state: use currentZoom/Center and targetZoom/Center

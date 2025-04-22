@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Magic Window Recorder</title>
   <link rel="stylesheet" href="styles.css">
@@ -24,10 +24,10 @@
     <div class="section zoom-controls">
       <h2 class="section-title">Zoom Controls</h2>
       <div class="controls button-group">
-        <button id="zoomIn" class="btn">Zoom In (2x)</button>
-        <button id="zoomOut" class="btn">Reset Zoom (1x)</button>
-        <button id="moveTopLeft" class="btn">Move to Top-Left</button>
-        <button id="moveCenter" class="btn">Move to Center</button>
+        <button id="zoom-in" class="btn">Zoom In (2x)</button>
+        <button id="zoom-out" class="btn">Reset Zoom (1x)</button>
+        <button id="move-top-left" class="btn">Move to Top-Left</button>
+        <button id="move-center" class="btn">Move to Center</button>
       </div>
     </div>
     
@@ -86,8 +86,9 @@
     </div>
   </div>
 
-  <!-- Include Pixi.js - use CDN version that's more reliable -->
+  <!-- Include Pixi.js and GSAP - use CDN versions -->
   <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.2.4/dist/pixi.min.js"></script>
-  <script src="renderer.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="renderer.js" type="module"></script>
 </body>
 </html>
