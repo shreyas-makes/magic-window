@@ -375,16 +375,16 @@ function initializeCanvas2DRenderingLoop() {
             canvasContext.drawImage(
               sourceVideo, 
               cropRegion.x, cropRegion.y, cropRegion.width, cropRegion.height,
-              -sourceVideo.videoWidth / 2 - zoomCenterOffsetX, 
-              -sourceVideo.videoHeight / 2 - zoomCenterOffsetY,
+              -sourceVideo.videoWidth / 2 - (sourceVideo.videoWidth * zoomCenterOffsetX), 
+              -sourceVideo.videoHeight / 2 - (sourceVideo.videoHeight * zoomCenterOffsetY),
               sourceVideo.videoWidth, sourceVideo.videoHeight
             );
           } else {
             canvasContext.drawImage(
               sourceVideo, 
               0, 0, sourceVideo.videoWidth, sourceVideo.videoHeight,
-              -sourceVideo.videoWidth / 2 - zoomCenterOffsetX, 
-              -sourceVideo.videoHeight / 2 - zoomCenterOffsetY,
+              -sourceVideo.videoWidth / 2 - (sourceVideo.videoWidth * zoomCenterOffsetX), 
+              -sourceVideo.videoHeight / 2 - (sourceVideo.videoHeight * zoomCenterOffsetY),
               sourceVideo.videoWidth, sourceVideo.videoHeight
             );
           }
@@ -1041,17 +1041,43 @@ function setupCanvasRendering(stream) {
 
 // Function to smoothly transition zoom and position
 function setZoom(level, centerX, centerY, duration = 0.3) {
+    // Validate inputs to prevent NaN or undefined values
+    level = parseFloat(level) || 1.0;
+    
+    // Use source video dimensions if available, otherwise use defaults
+    const videoWidth = sourceVideo && sourceVideo.videoWidth > 0 ? sourceVideo.videoWidth : 3840;
+    const videoHeight = sourceVideo && sourceVideo.videoHeight > 0 ? sourceVideo.videoHeight : 2160;
+    
+    // Ensure centerX and centerY are valid numbers within video dimensions
+    centerX = Math.min(Math.max(parseFloat(centerX) || videoWidth / 2, 0), videoWidth);
+    centerY = Math.min(Math.max(parseFloat(centerY) || videoHeight / 2, 0), videoHeight);
+    
+    // Ensure zoom level is reasonable (between 1.0 and 5.0)
+    level = Math.min(Math.max(level, 1.0), 5.0);
+    
+    // Set target values
     state.targetZoom = level;
     state.targetCenterX = centerX;
     state.targetCenterY = centerY;
     
-    // Use the global gsap object
+    console.log(`Setting zoom: level=${level}, center=(${centerX}, ${centerY}), duration=${duration}`);
+    
+    // Use the global gsap object for animation
     gsap.to(state, {
         currentZoom: level,
         currentCenterX: centerX,
         currentCenterY: centerY,
         duration: duration,
-        ease: 'power2.out'
+        ease: 'power2.out',
+        onUpdate: function() {
+            // Optional: log progress occasionally to debug
+            if (Math.random() < 0.01) {  // Limit logging to 1% of updates
+                console.log(`Zoom progress: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
+            }
+        },
+        onComplete: function() {
+            console.log(`Zoom complete: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
+        }
     });
 }
 
@@ -2044,6 +2070,56 @@ function initializeZoomControls() {
     const moveTopLeftButton = document.getElementById('move-top-left');
     const moveCenterButton = document.getElementById('move-center');
 
+    // Add new position control buttons
+    const zoomControlsContainer = document.querySelector('.zoom-controls .button-group');
+    if (zoomControlsContainer) {
+        // Add top-right and bottom-left buttons
+        const moveTopRightButton = document.createElement('button');
+        moveTopRightButton.id = 'move-top-right';
+        moveTopRightButton.className = 'btn';
+        moveTopRightButton.textContent = 'Move to Top-Right';
+        
+        const moveBottomLeftButton = document.createElement('button');
+        moveBottomLeftButton.id = 'move-bottom-left';
+        moveBottomLeftButton.className = 'btn';
+        moveBottomLeftButton.textContent = 'Move to Bottom-Left';
+        
+        const moveBottomRightButton = document.createElement('button');
+        moveBottomRightButton.id = 'move-bottom-right';
+        moveBottomRightButton.className = 'btn';
+        moveBottomRightButton.textContent = 'Move to Bottom-Right';
+        
+        // Add the new buttons to the container
+        zoomControlsContainer.appendChild(moveTopRightButton);
+        zoomControlsContainer.appendChild(moveBottomLeftButton);
+        zoomControlsContainer.appendChild(moveBottomRightButton);
+        
+        // Add event listeners for the new buttons
+        moveTopRightButton.addEventListener('click', () => {
+            // Top-right position (3/4 of width, 1/4 of height)
+            const targetX = sourceVideo ? sourceVideo.videoWidth * 0.75 : 2880;
+            const targetY = sourceVideo ? sourceVideo.videoHeight * 0.25 : 540;
+            setZoom(state.currentZoom, targetX, targetY);
+            console.log(`Moved to top-right: (${targetX}, ${targetY})`);
+        });
+        
+        moveBottomLeftButton.addEventListener('click', () => {
+            // Bottom-left position (1/4 of width, 3/4 of height)
+            const targetX = sourceVideo ? sourceVideo.videoWidth * 0.25 : 960;
+            const targetY = sourceVideo ? sourceVideo.videoHeight * 0.75 : 1620;
+            setZoom(state.currentZoom, targetX, targetY);
+            console.log(`Moved to bottom-left: (${targetX}, ${targetY})`);
+        });
+        
+        moveBottomRightButton.addEventListener('click', () => {
+            // Bottom-right position (3/4 of width, 3/4 of height)
+            const targetX = sourceVideo ? sourceVideo.videoWidth * 0.75 : 2880;
+            const targetY = sourceVideo ? sourceVideo.videoHeight * 0.75 : 1620;
+            setZoom(state.currentZoom, targetX, targetY);
+            console.log(`Moved to bottom-right: (${targetX}, ${targetY})`);
+        });
+    }
+
     if (zoomInButton) {
         zoomInButton.addEventListener('click', () => {
             setZoom(2.0, state.currentCenterX, state.currentCenterY);
@@ -2053,22 +2129,31 @@ function initializeZoomControls() {
 
     if (zoomOutButton) {
         zoomOutButton.addEventListener('click', () => {
-            setZoom(1.0, 1920, 1080); // Reset to center when zooming out
-            console.log('Reset zoom to 1x');
+            // Reset to center when zooming out
+            const centerX = sourceVideo ? sourceVideo.videoWidth / 2 : 1920; 
+            const centerY = sourceVideo ? sourceVideo.videoHeight / 2 : 1080;
+            setZoom(1.0, centerX, centerY);
+            console.log(`Reset zoom to 1x, center: (${centerX}, ${centerY})`);
         });
     }
 
     if (moveTopLeftButton) {
         moveTopLeftButton.addEventListener('click', () => {
-            setZoom(state.currentZoom, 960, 540);
-            console.log('Moved to top-left quarter');
+            // Top-left position (1/4 of width, 1/4 of height)
+            const targetX = sourceVideo ? sourceVideo.videoWidth * 0.25 : 960;
+            const targetY = sourceVideo ? sourceVideo.videoHeight * 0.25 : 540;
+            setZoom(state.currentZoom, targetX, targetY);
+            console.log(`Moved to top-left: (${targetX}, ${targetY})`);
         });
     }
 
     if (moveCenterButton) {
         moveCenterButton.addEventListener('click', () => {
-            setZoom(state.currentZoom, 1920, 1080);
-            console.log('Moved to center');
+            // Center position (1/2 of width, 1/2 of height)
+            const centerX = sourceVideo ? sourceVideo.videoWidth / 2 : 1920;
+            const centerY = sourceVideo ? sourceVideo.videoHeight / 2 : 1080;
+            setZoom(state.currentZoom, centerX, centerY);
+            console.log(`Moved to center: (${centerX}, ${centerY})`);
         });
     }
 }

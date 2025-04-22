@@ -512,10 +512,10 @@ h1 {
 }
 
 .zoom-controls .button-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
 }
 
 /* For smaller screens */
@@ -605,7 +605,8 @@ h1 {
 }
 
 .btn:hover {
-  transform: translateY(-1px);
+  background-color: #3498db;
+  color: white;
 }
 
 .btn:active {
