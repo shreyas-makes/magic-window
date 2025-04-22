@@ -13,6 +13,11 @@ let usePixi = true; // Whether to use PIXI.js or fallback to canvas API
 let canvasContext = null; // Canvas 2D context (for fallback renderer)
 let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
 
+// Zoom variables
+let zoomLevel = 1.0; // Default zoom level
+let zoomCenterX = 1920; // Default center X (assuming 3840x2160 canvas)
+let zoomCenterY = 1080; // Default center Y (assuming 3840x2160 canvas)
+
 // Timer variables
 let timerInterval = null;
 let secondsElapsed = 0;
@@ -591,6 +596,16 @@ async function setupPixiRendering() {
           if (videoSprite.texture.baseTexture) {
             videoSprite.texture.baseTexture.update();
           }
+          
+          // Apply zoom transformation
+          // Set the sprite's pivot point to the zoom center
+          videoSprite.pivot.set(zoomCenterX, zoomCenterY);
+          
+          // Position the sprite so that the zoom center appears at the center of the canvas
+          videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
+          
+          // Apply the zoom scale
+          videoSprite.scale.set(zoomLevel);
         }
       };
       
@@ -940,8 +955,9 @@ function updateUIState(state) {
   }
 }
 
-// When the page has loaded
-document.addEventListener('DOMContentLoaded', async () => {
+// Function to initialize UI event handlers after DOM loaded
+window.addEventListener('DOMContentLoaded', async () => {
+  // Initialize existing UI handlers
   const statusEl = document.getElementById('status');
   const sourceSelect = document.getElementById('sourceSelect');
   const refreshButton = document.getElementById('refreshSources');
@@ -1228,7 +1244,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     recordingMessageEl.appendChild(document.createElement('br'));
     recordingMessageEl.appendChild(openButton);
   });
+
+  // Initialize zoom control event handlers
+  initializeZoomControls();
 });
+
+// Function to initialize zoom control buttons
+function initializeZoomControls() {
+  // Get zoom control buttons
+  const zoomInButton = document.getElementById('zoomIn');
+  const zoomOutButton = document.getElementById('zoomOut');
+  const moveTopLeftButton = document.getElementById('moveTopLeft');
+  const moveCenterButton = document.getElementById('moveCenter');
+  
+  // Add click event listeners
+  if (zoomInButton) {
+    zoomInButton.addEventListener('click', () => {
+      zoomLevel = 2.0; // Set zoom to 2x
+      console.log('Zoom in to 2x');
+    });
+  }
+  
+  if (zoomOutButton) {
+    zoomOutButton.addEventListener('click', () => {
+      zoomLevel = 1.0; // Reset zoom to 1x
+      console.log('Reset zoom to 1x');
+    });
+  }
+  
+  if (moveTopLeftButton) {
+    moveTopLeftButton.addEventListener('click', () => {
+      // Move to top-left quarter (assuming 3840x2160 canvas)
+      zoomCenterX = 960; // 1/4 of the width 
+      zoomCenterY = 540; // 1/4 of the height
+      console.log('Moved to top-left quarter');
+    });
+  }
+  
+  if (moveCenterButton) {
+    moveCenterButton.addEventListener('click', () => {
+      // Move back to center (assuming 3840x2160 canvas)
+      zoomCenterX = 1920; // Half of the width
+      zoomCenterY = 1080; // Half of the height
+      console.log('Moved to center');
+    });
+  }
+}
 
 // After the DOMContentLoaded block, add global keyboard shortcut
 document.addEventListener('keydown', (event) => {
