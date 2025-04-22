@@ -9,6 +9,9 @@ let mediaRecorder = null; // MediaRecorder instance
 let recordedChunks = []; // Array to hold recorded chunks
 let sourceVideo = null; // Source video element
 let canvasStream = null; // Stream from canvas
+let usePixi = true; // Whether to use PIXI.js or fallback to canvas API
+let canvasContext = null; // Canvas 2D context (for fallback renderer)
+let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
 
 // Timer variables
 let timerInterval = null;
@@ -129,6 +132,29 @@ function updateConcatenationUI(data) {
   }
 }
 
+// Function to check PIXI version and log important information
+function logPixiInfo() {
+  try {
+    const version = PIXI.VERSION || 'unknown';
+    console.log(`PIXI.js version: ${version}`);
+    
+    // Log available properties
+    console.log('PIXI.Renderer available:', !!PIXI.Renderer);
+    console.log('PIXI.CanvasRenderer available:', !!PIXI.CanvasRenderer);
+    console.log('app.view:', !!app.view);
+    
+    if (app.renderer) {
+      console.log('app.renderer type:', app.renderer.type);
+      console.log('app.renderer dimensions:', app.renderer.width, 'x', app.renderer.height);
+    }
+    
+    return version;
+  } catch (err) {
+    console.error('Error getting PIXI info:', err);
+    return 'error';
+  }
+}
+
 // Initialize Pixi.js
 function initializePixi() {
   try {
@@ -138,15 +164,43 @@ function initializePixi() {
       throw new Error('Canvas element not found');
     }
     
-    // Create a new PIXI Application
-    app = new PIXI.Application({
-      view: canvasElement,
-      width: 3840,
-      height: 2160,
-      backgroundColor: 0x000000,
-      resolution: 1,
-      autoDensity: true
-    });
+    // Set canvas size to match desired dimensions (4K)
+    canvasElement.width = 3840;
+    canvasElement.height = 2160;
+    
+    try {
+      // Create a new PIXI Application with compatibility options
+      const options = {
+        view: canvasElement,
+        width: canvasElement.width,
+        height: canvasElement.height,
+        backgroundColor: 0x000000,
+        resolution: 1,
+        autoDensity: true,
+        antialias: false // Better performance without antialiasing
+      };
+      
+      // Create the application
+      app = new PIXI.Application(options);
+      
+      // Log PIXI information
+      logPixiInfo();
+      
+      // PIXI initialization was successful
+      usePixi = true;
+    } catch (pixiError) {
+      console.error('Error initializing PIXI.js:', pixiError);
+      console.log('Falling back to regular Canvas 2D rendering');
+      
+      // Fallback to Canvas 2D API
+      usePixi = false;
+      canvasContext = canvasElement.getContext('2d');
+      if (!canvasContext) {
+        throw new Error('Could not get 2D context from canvas');
+      }
+      
+      console.log('Canvas 2D context initialized successfully');
+    }
     
     // Get video element
     sourceVideo = document.getElementById('source-video');
@@ -154,31 +208,255 @@ function initializePixi() {
       throw new Error('Source video element not found');
     }
     
-    console.log('Pixi.js initialized successfully');
+    // If using PIXI, configure the ticker
+    if (usePixi) {
+      try {
+        // Try to set FPS (compatible with newer Pixi.js versions)
+        if (app.ticker && typeof app.ticker.maxFPS !== 'undefined') {
+          app.ticker.maxFPS = 60;
+        } 
+        // For older versions, adjust the update frequency
+        else if (app.ticker && app.ticker.update) {
+          // Use the default ticker settings
+          app.ticker.autoStart = true;
+          app.ticker.shared.autoStart = true;
+        }
+      } catch (tickerError) {
+        console.warn('Non-critical error configuring ticker:', tickerError);
+        // Continue anyway since this is not critical
+      }
+    }
+    
+    console.log(`${usePixi ? 'Pixi.js' : 'Canvas 2D'} initialized successfully`);
     
     return true;
   } catch (error) {
-    console.error('Error initializing Pixi.js:', error);
+    console.error('Error initializing rendering:', error);
     return false;
   }
 }
 
+// Initialize canvas 2D rendering loop (fallback when PIXI fails)
+function initializeCanvas2DRenderingLoop() {
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+  }
+  
+  // Simple render loop to draw video to canvas
+  function render() {
+    if (sourceVideo && canvasContext) {
+      // Draw video frame to canvas
+      canvasContext.drawImage(
+        sourceVideo, 
+        0, 0, 
+        canvasContext.canvas.width, 
+        canvasContext.canvas.height
+      );
+    }
+    
+    // Continue the loop
+    animationFrameId = requestAnimationFrame(render);
+  }
+  
+  // Start the render loop
+  animationFrameId = requestAnimationFrame(render);
+  console.log('Canvas 2D rendering loop started');
+}
+
+// Function to create source selection dialog
+async function showSourceSelectionDialog() {
+  try {
+    // Get sources from main process
+    const sources = await window.electronAPI.captureDesktop();
+    console.log('Got sources for dialog:', sources.length);
+    
+    // Create a modal dialog
+    const dialog = document.createElement('div');
+    dialog.className = 'source-dialog-overlay';
+    dialog.innerHTML = `
+      <div class="source-dialog">
+        <h2>Select Source to Record</h2>
+        <div class="source-grid" id="sourceGrid"></div>
+        <div class="dialog-buttons">
+          <button id="cancelSourceDialog" class="btn">Cancel</button>
+        </div>
+      </div>
+    `;
+    
+    // Add to body
+    document.body.appendChild(dialog);
+    
+    // Add styles if they don't exist
+    if (!document.getElementById('source-dialog-styles')) {
+      const style = document.createElement('style');
+      style.id = 'source-dialog-styles';
+      style.textContent = `
+        .source-dialog-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+        .source-dialog {
+          background: white;
+          border-radius: 8px;
+          padding: 20px;
+          width: 80%;
+          max-width: 800px;
+          max-height: 80vh;
+          overflow-y: auto;
+        }
+        .source-dialog h2 {
+          margin-top: 0;
+          color: #2c3e50;
+          text-align: center;
+        }
+        .source-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 15px;
+          margin: 20px 0;
+        }
+        .source-item {
+          border: 2px solid #ddd;
+          border-radius: 4px;
+          padding: 10px;
+          text-align: center;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .source-item:hover {
+          border-color: #3498db;
+          background: #f8f9fa;
+        }
+        .source-item img {
+          width: 100%;
+          height: auto;
+          margin-bottom: 10px;
+          border: 1px solid #eee;
+        }
+        .source-item p {
+          margin: 5px 0;
+          font-size: 14px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .dialog-buttons {
+          text-align: center;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    // Populate sources
+    const sourceGrid = document.getElementById('sourceGrid');
+    sources.forEach(source => {
+      const sourceItem = document.createElement('div');
+      sourceItem.className = 'source-item';
+      sourceItem.innerHTML = `
+        <img src="${source.thumbnail}" alt="${source.name}">
+        <p title="${source.name}">${source.name}</p>
+      `;
+      
+      // Add click handler to select this source
+      sourceItem.addEventListener('click', () => {
+        selectedSourceId = source.id;
+        
+        // Remove dialog
+        document.body.removeChild(dialog);
+        
+        // Resolve the promise with the selected ID
+        dialogResolve(source.id);
+      });
+      
+      sourceGrid.appendChild(sourceItem);
+    });
+    
+    // Add cancel button handler
+    document.getElementById('cancelSourceDialog').addEventListener('click', () => {
+      document.body.removeChild(dialog);
+      dialogReject(new Error('Source selection canceled'));
+    });
+    
+    // Return a promise that resolves when a source is selected
+    return new Promise((resolve, reject) => {
+      dialogResolve = resolve;
+      dialogReject = reject;
+    });
+  } catch (error) {
+    console.error('Error showing source selection dialog:', error);
+    throw error;
+  }
+}
+
+// Variables for the dialog promise
+let dialogResolve = null;
+let dialogReject = null;
+
 // Function to get media stream from a source
 async function getSourceStream(sourceId) {
   try {
-    console.log('Getting stream for source ID:', sourceId);
+    console.log('Getting stream for source:', sourceId);
     
-    // Use desktopCapturer directly in the renderer
-    const sources = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-        frameRate: { ideal: 60 }
+    // Show source selection dialog to get specific ID
+    let selectedId = sourceId;
+    
+    if (!selectedId) {
+      try {
+        console.log('Showing source selection dialog');
+        selectedId = await showSourceSelectionDialog();
+        console.log('User selected source:', selectedId);
+      } catch (dialogError) {
+        console.error('Error from source dialog:', dialogError);
+        throw dialogError;
       }
-    });
+    }
     
-    console.log('Successfully got media stream');
-    return sources;
+    if (!selectedId) {
+      throw new Error('No source selected');
+    }
+    
+    // Get the stream using the older navigator.mediaDevices.getUserMedia API
+    // which is better supported in Electron
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: selectedId,
+            minWidth: 1920,
+            minHeight: 1080,
+            maxWidth: 3840,
+            maxHeight: 2160
+          }
+        }
+      });
+      
+      // Check if we have a valid video track
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length === 0) {
+        throw new Error('No video track in the captured stream');
+      }
+      
+      // Log information about the captured stream
+      const videoTrack = videoTracks[0];
+      console.log('Video track:', videoTrack.label);
+      console.log('Track settings:', videoTrack.getSettings());
+      
+      console.log('Successfully obtained media stream');
+      return stream;
+    } catch (err) {
+      console.error('Failed to get media stream:', err);
+      throw err;
+    }
   } catch (error) {
     console.error('Error getting source stream:', error);
     throw error;
@@ -188,9 +466,78 @@ async function getSourceStream(sourceId) {
 // Function to setup canvas rendering with the source stream
 function setupCanvasRendering(stream) {
   try {
+    console.log('Setting up canvas rendering with stream');
+    
     // Set the video source to the stream
     sourceVideo.srcObject = stream;
-    sourceVideo.play();
+    console.log('Set stream to video element');
+    
+    sourceVideo.onloadedmetadata = () => {
+      console.log('Video metadata loaded, starting playback');
+      sourceVideo.play()
+        .then(() => console.log('Video playback started'))
+        .catch(err => console.error('Error starting video playback:', err));
+    };
+    
+    // Wait for video to be ready
+    return new Promise((resolve) => {
+      console.log('Waiting for video to start playing');
+      
+      // This will ensure the video is actually playing before we try to use it
+      sourceVideo.onplaying = () => {
+        console.log('Video is now playing, setting up rendering');
+        
+        // Choose the rendering method based on initialization
+        if (usePixi) {
+          setupPixiRendering()
+            .then(success => resolve(success))
+            .catch(err => {
+              console.error('Error setting up PIXI rendering:', err);
+              // Fallback to Canvas 2D
+              usePixi = false;
+              console.log('Falling back to Canvas 2D rendering');
+              setupCanvas2DRendering()
+                .then(success => resolve(success))
+                .catch(canvas2dErr => {
+                  console.error('Error setting up Canvas 2D rendering:', canvas2dErr);
+                  resolve(false);
+                });
+            });
+        } else {
+          // Use Canvas 2D rendering
+          setupCanvas2DRendering()
+            .then(success => resolve(success))
+            .catch(err => {
+              console.error('Error setting up Canvas 2D rendering:', err);
+              resolve(false);
+            });
+        }
+      };
+      
+      // In case the video is already playing
+      if (sourceVideo.readyState >= 3) {
+        console.log('Video is already playing, triggering onplaying handler');
+        sourceVideo.onplaying();
+      }
+      
+      // Set a timeout in case the video never plays
+      setTimeout(() => {
+        if (!canvasStream) {
+          console.error('Timeout waiting for video to play');
+          resolve(false);
+        }
+      }, 5000);
+    });
+  } catch (error) {
+    console.error('Error setting up canvas rendering:', error);
+    return Promise.resolve(false);
+  }
+}
+
+// Function to setup PIXI.js rendering
+async function setupPixiRendering() {
+  try {
+    console.log('Setting up PIXI rendering');
     
     // Make sure we have a valid app instance
     if (!app) {
@@ -199,33 +546,115 @@ function setupCanvasRendering(stream) {
     
     // Clear the stage if we had a previous sprite
     if (videoSprite) {
+      console.log('Removing previous video sprite');
       app.stage.removeChild(videoSprite);
+      videoSprite.destroy();
     }
     
     // Create a texture from the video element
+    console.log('Creating video texture');
     const videoTexture = PIXI.Texture.from(sourceVideo);
-    videoTexture.baseTexture.autoUpdate = true;
     
+    // Explicitly set update properties on the texture
+    videoTexture.baseTexture.autoUpdate = true;
+    if (videoTexture.baseTexture.resource) {
+      videoTexture.baseTexture.resource.autoPlay = true;
+    }
+    
+    console.log('Creating sprite from texture');
     // Create a sprite from the texture
     videoSprite = new PIXI.Sprite(videoTexture);
     
-    // Set sprite properties to cover the entire canvas
-    videoSprite.width = app.renderer.width;
-    videoSprite.height = app.renderer.height;
+    // Get canvas dimensions - compatible with all PIXI versions
+    const canvasWidth = app.view.width || app.renderer.width || 3840;
+    const canvasHeight = app.view.height || app.renderer.height || 2160;
+    
+    // Set sprite properties to fill the canvas
+    videoSprite.width = canvasWidth;
+    videoSprite.height = canvasHeight;
+    console.log(`Set video sprite dimensions: ${videoSprite.width}x${videoSprite.height}`);
+    
+    // Center the sprite
+    videoSprite.position.set(0, 0);
     
     // Add the sprite to the stage
     app.stage.addChild(videoSprite);
     
+    // Set up a ticker to ensure the texture updates
+    // This helps with video rendering performance
+    try {
+      console.log('Setting up ticker for texture updates');
+      const tickerCallback = () => {
+        // Just having the ticker active helps with updates
+        if (videoSprite && videoSprite.texture) {
+          // Force texture update if needed
+          if (videoSprite.texture.baseTexture) {
+            videoSprite.texture.baseTexture.update();
+          }
+        }
+      };
+      
+      // Add the ticker callback using a method that works with different Pixi versions
+      if (app.ticker && app.ticker.add) {
+        app.ticker.add(tickerCallback);
+        console.log('Added ticker callback to app.ticker');
+      } else if (PIXI.Ticker && PIXI.Ticker.shared) {
+        PIXI.Ticker.shared.add(tickerCallback);
+        console.log('Added ticker callback to PIXI.Ticker.shared');
+      } else {
+        // Fallback to requestAnimationFrame if ticker is not available
+        console.log('Using requestAnimationFrame fallback for updates');
+        const animate = () => {
+          tickerCallback();
+          requestAnimationFrame(animate);
+        };
+        requestAnimationFrame(animate);
+      }
+    } catch (tickerError) {
+      console.warn('Non-critical error setting up ticker:', tickerError);
+      // Continue anyway as this is not critical
+    }
+    
     // Get the canvas stream for recording
+    console.log('Getting stream from canvas');
     const canvasElement = document.getElementById('main-canvas');
     canvasStream = canvasElement.captureStream(60);
     
-    console.log('Canvas rendering setup complete');
-    
+    console.log('PIXI.js rendering setup complete');
     return true;
   } catch (error) {
-    console.error('Error setting up canvas rendering:', error);
-    return false;
+    console.error('Error setting up PIXI rendering:', error);
+    throw error;
+  }
+}
+
+// Function to setup Canvas 2D rendering (fallback)
+async function setupCanvas2DRendering() {
+  try {
+    console.log('Setting up Canvas 2D rendering');
+    
+    // Make sure we have a valid canvas context
+    if (!canvasContext) {
+      const canvasElement = document.getElementById('main-canvas');
+      canvasContext = canvasElement.getContext('2d');
+      if (!canvasContext) {
+        throw new Error('Could not get 2D context from canvas');
+      }
+    }
+    
+    // Start the render loop
+    initializeCanvas2DRenderingLoop();
+    
+    // Get the canvas stream for recording
+    console.log('Getting stream from canvas');
+    const canvasElement = document.getElementById('main-canvas');
+    canvasStream = canvasElement.captureStream(60);
+    
+    console.log('Canvas 2D rendering setup complete');
+    return true;
+  } catch (error) {
+    console.error('Error setting up Canvas 2D rendering:', error);
+    throw error;
   }
 }
 
@@ -236,18 +665,50 @@ function setupMediaRecorder() {
       throw new Error('Canvas stream not available');
     }
     
-    // Check if HEVC is supported
-    const mimeType = MediaRecorder.isTypeSupported('video/mp4; codecs=hvc1') 
-      ? 'video/mp4; codecs=hvc1' 
-      : 'video/webm; codecs=h264';
+    // Log available MIME types for debugging
+    console.log('Available MIME types:');
+    const types = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm;codecs=h264',
+      'video/mp4;codecs=h264',
+      'video/mp4;codecs=avc1',
+      'video/mp4;codecs=hvc1'
+    ];
     
-    console.log(`Using MIME type: ${mimeType}`);
+    types.forEach(type => {
+      console.log(`${type}: ${MediaRecorder.isTypeSupported(type)}`);
+    });
+    
+    // Check for best supported codec in order of preference
+    // For better compatibility, prioritize WebM formats first
+    let mimeType = '';
+    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+      mimeType = 'video/webm;codecs=vp9'; // VP9 (good quality/compression)
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+      mimeType = 'video/webm;codecs=vp8'; // VP8 (widely supported)
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+      mimeType = 'video/webm;codecs=h264'; // WebM with H.264
+    } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
+      mimeType = 'video/mp4;codecs=h264'; // H.264 (good compatibility)
+    } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=hvc1')) {
+      mimeType = 'video/mp4;codecs=hvc1'; // HEVC (best quality/compression)
+    } else {
+      // Use default
+      mimeType = ''; 
+    }
+    
+    console.log(`Using MIME type: ${mimeType || 'default'}`);
     
     // Create media recorder options with high bitrate for 4K/60FPS
     const options = {
-      mimeType: mimeType,
-      videoBitsPerSecond: 30000000 // 30 Mbps
+      videoBitsPerSecond: 20000000 // 20 Mbps for balance of quality and file size
     };
+    
+    // Add mime type if we have a supported one
+    if (mimeType) {
+      options.mimeType = mimeType;
+    }
     
     // Create media recorder
     mediaRecorder = new MediaRecorder(canvasStream, options);
@@ -265,7 +726,7 @@ function setupMediaRecorder() {
           // Send the chunk to the main process
           window.electronAPI.sendBlobChunk({
             buffer: buffer,
-            mimeType: mimeType,
+            mimeType: mediaRecorder.mimeType || 'video/webm',
             isLastChunk: false
           });
         });
@@ -278,14 +739,14 @@ function setupMediaRecorder() {
       
       // If there's a final chunk from recordedChunks that hasn't been sent yet
       if (recordedChunks.length > 0) {
-        const lastBlob = new Blob(recordedChunks, { type: mimeType });
+        const lastBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
         
         // Convert blob to ArrayBuffer for IPC
         lastBlob.arrayBuffer().then(buffer => {
           // Send the final chunk to the main process
           window.electronAPI.sendBlobChunk({
             buffer: buffer,
-            mimeType: mimeType,
+            mimeType: mediaRecorder.mimeType || 'video/webm',
             isLastChunk: true
           });
           
@@ -322,8 +783,10 @@ function startCanvasRecording() {
     
     console.log('Starting canvas recording');
     
-    // Start recording with 10-second segments
-    mediaRecorder.start(10000); // 10 seconds per segment
+    // Start recording with segments
+    // For 4K video, use larger segments (20 seconds) to reduce overhead
+    // but small enough for reasonable concatenation times
+    mediaRecorder.start(20000); // 20 second segments
     
     // Notify main process that recording has started
     window.electronAPI.startCanvasRecording();
@@ -575,24 +1038,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     recordingMessageEl.className = 'pending';
     
     try {
-      // Get stream for the selected source on recording start
-      const stream = await getSourceStream();
+      // Get the selected source ID from the dropdown or open dialog
+      const sourceSelect = document.getElementById('sourceSelect');
+      const selectedSourceId = sourceSelect.value;
       
-      // Setup canvas rendering with the stream
-      if (!setupCanvasRendering(stream)) {
-        throw new Error('Failed to setup canvas rendering');
-      }
+      // Get stream for the selected source
+      console.log('Getting stream for selected source:', selectedSourceId);
       
-      // Setup media recorder
-      if (!setupMediaRecorder()) {
-        throw new Error('Failed to setup media recorder');
-      }
-      
-      // Start canvas recording
-      if (startCanvasRecording()) {
-        console.log('Canvas recording started successfully');
-      } else {
-        throw new Error('Failed to start canvas recording');
+      try {
+        const stream = await getSourceStream(selectedSourceId);
+        
+        // Update message after successful stream capture
+        recordingMessageEl.textContent = 'Setting up recording with selected source...';
+        
+        // Setup canvas rendering with the stream
+        console.log('Setting up canvas rendering');
+        if (!await setupCanvasRendering(stream)) {
+          throw new Error('Failed to setup canvas rendering');
+        }
+        
+        // Setup media recorder
+        console.log('Setting up media recorder');
+        if (!setupMediaRecorder()) {
+          throw new Error('Failed to setup media recorder');
+        }
+        
+        // Start canvas recording
+        console.log('Starting canvas recording');
+        if (startCanvasRecording()) {
+          console.log('Canvas recording started successfully');
+        } else {
+          throw new Error('Failed to start canvas recording');
+        }
+      } catch (streamError) {
+        // If the error is because the user canceled the source selection,
+        // just reset the state without showing an error
+        if (streamError.message === 'Source selection canceled') {
+          recordingMessageEl.textContent = 'Recording canceled';
+          recordingMessageEl.className = '';
+          setTimeout(() => {
+            recordingMessageEl.textContent = '';
+          }, 2000);
+          return;
+        }
+        
+        // Otherwise rethrow
+        throw streamError;
       }
     } catch (error) {
       console.error('Error starting recording:', error);

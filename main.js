@@ -80,7 +80,7 @@ const MAX_RECORDING_SECONDS = 7200; // 2 hours (7200 seconds)
 const DISK_SPACE_LOW_THRESHOLD = 2 * 1024 * 1024 * 1024; // 2GB
 const DISK_SPACE_CRITICAL_THRESHOLD = 100 * 1024 * 1024; // 100MB
 
-function createWindow() {
+const createWindow = () => {
   // Get the primary display's work area dimensions
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
@@ -95,8 +95,30 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      enableRemoteModule: false,
+      webSecurity: true
     }
+  });
+
+  // Set permissions for media devices and screen capture
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || 
+        permission === 'display-capture' || 
+        permission === 'mediaKeySystem' ||
+        permission === 'geolocation' || 
+        permission === 'notifications') {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
+
+  // Set permissions for media access
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    return permission === 'media' || 
+           permission === 'display-capture' || 
+           permission === 'mediaKeySystem';
   });
 
   // Center the window on the screen
@@ -112,7 +134,7 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Window loaded and ready');
   });
-}
+};
 
 // Helper function to send UI state updates to renderer
 function sendStateUpdate() {
@@ -1009,6 +1031,35 @@ app.whenReady().then(() => {
         }
       }
     });
+  });
+
+  // Handle get sources for direct desktop capture
+  ipcMain.handle('captureDesktop', async (event, options) => {
+    try {
+      console.log('Handling captureDesktop request');
+      
+      // Get all available sources
+      const sources = await desktopCapturer.getSources({ 
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 150, height: 150 }
+      });
+      
+      if (sources.length === 0) {
+        throw new Error('No capture sources available');
+      }
+      
+      console.log(`Found ${sources.length} capture sources`);
+      
+      // Map sources to a simplified format for the renderer
+      return sources.map(source => ({
+        id: source.id,
+        name: source.name,
+        thumbnail: source.thumbnail.toDataURL()
+      }));
+    } catch (error) {
+      console.error('Error in captureDesktop handler:', error);
+      throw error;
+    }
   });
 
   app.on('activate', function () {
