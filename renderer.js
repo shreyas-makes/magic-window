@@ -2,6 +2,14 @@
 // Import path module from Node.js through the preload script
 const path = { sep: '/' }; // Simple path separator for use in the renderer
 
+// Canvas and recording variables
+let app = null; // PIXI application
+let videoSprite = null; // PIXI sprite for video
+let mediaRecorder = null; // MediaRecorder instance
+let recordedChunks = []; // Array to hold recorded chunks
+let sourceVideo = null; // Source video element
+let canvasStream = null; // Stream from canvas
+
 // Timer variables
 let timerInterval = null;
 let secondsElapsed = 0;
@@ -121,6 +129,266 @@ function updateConcatenationUI(data) {
   }
 }
 
+// Initialize Pixi.js
+function initializePixi() {
+  try {
+    // Get canvas element
+    const canvasElement = document.getElementById('main-canvas');
+    if (!canvasElement) {
+      throw new Error('Canvas element not found');
+    }
+    
+    // Create a new PIXI Application
+    app = new PIXI.Application({
+      view: canvasElement,
+      width: 3840,
+      height: 2160,
+      backgroundColor: 0x000000,
+      resolution: 1,
+      autoDensity: true
+    });
+    
+    // Get video element
+    sourceVideo = document.getElementById('source-video');
+    if (!sourceVideo) {
+      throw new Error('Source video element not found');
+    }
+    
+    console.log('Pixi.js initialized successfully');
+    
+    return true;
+  } catch (error) {
+    console.error('Error initializing Pixi.js:', error);
+    return false;
+  }
+}
+
+// Function to get media stream from a source
+async function getSourceStream(sourceId) {
+  try {
+    console.log('Getting stream for source ID:', sourceId);
+    
+    // Use desktopCapturer directly in the renderer
+    const sources = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 60 }
+      }
+    });
+    
+    console.log('Successfully got media stream');
+    return sources;
+  } catch (error) {
+    console.error('Error getting source stream:', error);
+    throw error;
+  }
+}
+
+// Function to setup canvas rendering with the source stream
+function setupCanvasRendering(stream) {
+  try {
+    // Set the video source to the stream
+    sourceVideo.srcObject = stream;
+    sourceVideo.play();
+    
+    // Make sure we have a valid app instance
+    if (!app) {
+      throw new Error('Pixi application not initialized');
+    }
+    
+    // Clear the stage if we had a previous sprite
+    if (videoSprite) {
+      app.stage.removeChild(videoSprite);
+    }
+    
+    // Create a texture from the video element
+    const videoTexture = PIXI.Texture.from(sourceVideo);
+    videoTexture.baseTexture.autoUpdate = true;
+    
+    // Create a sprite from the texture
+    videoSprite = new PIXI.Sprite(videoTexture);
+    
+    // Set sprite properties to cover the entire canvas
+    videoSprite.width = app.renderer.width;
+    videoSprite.height = app.renderer.height;
+    
+    // Add the sprite to the stage
+    app.stage.addChild(videoSprite);
+    
+    // Get the canvas stream for recording
+    const canvasElement = document.getElementById('main-canvas');
+    canvasStream = canvasElement.captureStream(60);
+    
+    console.log('Canvas rendering setup complete');
+    
+    return true;
+  } catch (error) {
+    console.error('Error setting up canvas rendering:', error);
+    return false;
+  }
+}
+
+// Function to setup media recorder with canvas stream
+function setupMediaRecorder() {
+  try {
+    if (!canvasStream) {
+      throw new Error('Canvas stream not available');
+    }
+    
+    // Check if HEVC is supported
+    const mimeType = MediaRecorder.isTypeSupported('video/mp4; codecs=hvc1') 
+      ? 'video/mp4; codecs=hvc1' 
+      : 'video/webm; codecs=h264';
+    
+    console.log(`Using MIME type: ${mimeType}`);
+    
+    // Create media recorder options with high bitrate for 4K/60FPS
+    const options = {
+      mimeType: mimeType,
+      videoBitsPerSecond: 30000000 // 30 Mbps
+    };
+    
+    // Create media recorder
+    mediaRecorder = new MediaRecorder(canvasStream, options);
+    
+    // Clear recorded chunks array
+    recordedChunks = [];
+    
+    // Handle data available event
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.push(event.data);
+        
+        // Convert blob to ArrayBuffer for IPC
+        event.data.arrayBuffer().then(buffer => {
+          // Send the chunk to the main process
+          window.electronAPI.sendBlobChunk({
+            buffer: buffer,
+            mimeType: mimeType,
+            isLastChunk: false
+          });
+        });
+      }
+    };
+    
+    // Handle recording stop event
+    mediaRecorder.onstop = () => {
+      console.log('MediaRecorder stopped, processing final data');
+      
+      // If there's a final chunk from recordedChunks that hasn't been sent yet
+      if (recordedChunks.length > 0) {
+        const lastBlob = new Blob(recordedChunks, { type: mimeType });
+        
+        // Convert blob to ArrayBuffer for IPC
+        lastBlob.arrayBuffer().then(buffer => {
+          // Send the final chunk to the main process
+          window.electronAPI.sendBlobChunk({
+            buffer: buffer,
+            mimeType: mimeType,
+            isLastChunk: true
+          });
+          
+          // Clear recorded chunks
+          recordedChunks = [];
+        });
+      } else {
+        // No chunks to send, signal end of recording
+        window.electronAPI.stopRecording();
+      }
+    };
+    
+    // Handle recording error
+    mediaRecorder.onerror = (event) => {
+      console.error('MediaRecorder error:', event.error);
+      window.electronAPI.send('recordingError', event.error.toString());
+    };
+    
+    console.log('MediaRecorder setup complete');
+    
+    return true;
+  } catch (error) {
+    console.error('Error setting up media recorder:', error);
+    return false;
+  }
+}
+
+// Function to start recording
+function startCanvasRecording() {
+  try {
+    if (!mediaRecorder) {
+      throw new Error('MediaRecorder not initialized');
+    }
+    
+    console.log('Starting canvas recording');
+    
+    // Start recording with 10-second segments
+    mediaRecorder.start(10000); // 10 seconds per segment
+    
+    // Notify main process that recording has started
+    window.electronAPI.startCanvasRecording();
+    
+    return true;
+  } catch (error) {
+    console.error('Error starting canvas recording:', error);
+    return false;
+  }
+}
+
+// Function to stop recording
+function stopCanvasRecording() {
+  try {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+      console.warn('MediaRecorder not active, nothing to stop');
+      return false;
+    }
+    
+    console.log('Stopping canvas recording');
+    mediaRecorder.stop();
+    
+    return true;
+  } catch (error) {
+    console.error('Error stopping canvas recording:', error);
+    return false;
+  }
+}
+
+// Function to pause recording
+function pauseCanvasRecording() {
+  try {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') {
+      console.warn('MediaRecorder not recording, cannot pause');
+      return false;
+    }
+    
+    console.log('Pausing canvas recording');
+    mediaRecorder.pause();
+    
+    return true;
+  } catch (error) {
+    console.error('Error pausing canvas recording:', error);
+    return false;
+  }
+}
+
+// Function to resume recording
+function resumeCanvasRecording() {
+  try {
+    if (!mediaRecorder || mediaRecorder.state !== 'paused') {
+      console.warn('MediaRecorder not paused, cannot resume');
+      return false;
+    }
+    
+    console.log('Resuming canvas recording');
+    mediaRecorder.resume();
+    
+    return true;
+  } catch (error) {
+    console.error('Error resuming canvas recording:', error);
+    return false;
+  }
+}
+
 // Function to populate the sources dropdown
 async function populateSources() {
   const sourceSelect = document.getElementById('sourceSelect');
@@ -225,6 +493,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   console.log('Renderer process started');
   
+  // Initialize Pixi.js
+  if (!initializePixi()) {
+    statusEl.textContent = 'Error initializing canvas rendering';
+    statusEl.className = 'status error';
+    return;
+  }
+  
   // Test initial communication
   statusEl.textContent = 'Sending ping to main process...';
   statusEl.className = 'status pending';
@@ -272,15 +547,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // Setup source selection change handler
-  sourceSelect.addEventListener('change', (event) => {
+  sourceSelect.addEventListener('change', async (event) => {
     const selectedSourceId = event.target.value;
     if (selectedSourceId) {
       console.log('Source selected:', selectedSourceId);
-      window.electronAPI.sourceSelected(selectedSourceId);
       statusEl.textContent = `Selected source: ${event.target.options[event.target.selectedIndex].text}`;
+      statusEl.className = 'status pending';
       
-      // Enable start recording button when a source is selected
+      // Send source ID to main process for reference
+      window.electronAPI.sourceSelected(selectedSourceId);
+      
+      // Enable start recording button now that a source is selected
       startRecordingBtn.disabled = false;
+      
+      statusEl.textContent = `Ready to select display source when recording starts`;
+      statusEl.className = 'status success';
     } else {
       // Disable start recording button when no source is selected
       startRecordingBtn.disabled = true;
@@ -288,25 +569,56 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // Setup start recording button
-  startRecordingBtn.addEventListener('click', () => {
+  startRecordingBtn.addEventListener('click', async () => {
     console.log('Start Recording button clicked');
-    recordingMessageEl.textContent = 'Starting recording...';
+    recordingMessageEl.textContent = 'Preparing to record...';
     recordingMessageEl.className = 'pending';
     
-    // Send start recording request to main process
-    window.electronAPI.startRecording();
+    try {
+      // Get stream for the selected source on recording start
+      const stream = await getSourceStream();
+      
+      // Setup canvas rendering with the stream
+      if (!setupCanvasRendering(stream)) {
+        throw new Error('Failed to setup canvas rendering');
+      }
+      
+      // Setup media recorder
+      if (!setupMediaRecorder()) {
+        throw new Error('Failed to setup media recorder');
+      }
+      
+      // Start canvas recording
+      if (startCanvasRecording()) {
+        console.log('Canvas recording started successfully');
+      } else {
+        throw new Error('Failed to start canvas recording');
+      }
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      recordingMessageEl.textContent = `Error: ${error.message}`;
+      recordingMessageEl.className = 'error';
+    }
   });
   
   // Setup pause recording button
   pauseRecordingBtn.addEventListener('click', () => {
     console.log('Pause Recording button clicked');
-    window.electronAPI.pauseRecording();
+    
+    // Pause canvas recording
+    if (pauseCanvasRecording()) {
+      window.electronAPI.pauseRecording();
+    }
   });
   
   // Setup resume recording button
   resumeRecordingBtn.addEventListener('click', () => {
     console.log('Resume Recording button clicked');
-    window.electronAPI.resumeRecording();
+    
+    // Resume canvas recording
+    if (resumeCanvasRecording()) {
+      window.electronAPI.resumeRecording();
+    }
   });
   
   // Setup stop recording button
@@ -315,8 +627,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     recordingMessageEl.textContent = 'Stopping recording...';
     recordingMessageEl.className = 'pending';
     
-    // Send stop recording request to main process
-    window.electronAPI.stopRecording();
+    // Stop canvas recording
+    if (stopCanvasRecording()) {
+      console.log('Canvas recording stopped successfully');
+    } else {
+      recordingMessageEl.textContent = 'Error stopping recording';
+      recordingMessageEl.className = 'error';
+    }
   });
   
   // Listen for hotkey-triggered start recording
@@ -341,6 +658,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         formatLabel = 'WebM';
       }
+    } else if (mimeType.includes('hvc1')) {
+      formatLabel = 'MP4/HEVC';
     }
     
     if (recordingMessageEl.textContent.includes('Recording in progress')) {
@@ -376,6 +695,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     recordingMessageEl.textContent = 'Recording stopped automatically after reaching the 2-hour limit';
     recordingMessageEl.className = 'warning';
+    
+    // Stop the recording
+    stopCanvasRecording();
   });
   
   // Listen for recording errors
@@ -396,44 +718,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.electronAPI.on('recordingSaved', async (filePath) => {
     console.log('Recording saved:', filePath);
     
-    // Make sure these elements are available in this scope
-    const statusEl = document.getElementById('status');
-    const recordingMessageEl = document.getElementById('recordingMessage');
-    
-    // Update status
+    // Update UI
     statusEl.textContent = 'Recording saved successfully';
     statusEl.className = 'status success';
     
-    // Update recording message
-    recordingMessageEl.innerHTML = `
-      <div>Recording saved successfully!</div>
-      <div class="file-path">Location: <span class="path">${filePath}</span></div>
-      <button id="openVideoBtn" class="open-file-btn">Play Recording</button>
-      <button id="openDirBtn" class="open-file-btn">Open Directory</button>
-    `;
+    recordingMessageEl.textContent = `Recording saved to: ${filePath}`;
     recordingMessageEl.className = 'success';
     
-    // Add click handler for buttons
-    setTimeout(() => {
-      const openVideoBtn = document.getElementById('openVideoBtn');
-      const openDirBtn = document.getElementById('openDirBtn');
-      
-      if (openVideoBtn) {
-        openVideoBtn.addEventListener('click', () => {
-          console.log('Open video button clicked for:', filePath);
-          window.electronAPI.openFile(filePath);
-        });
-      }
-      
-      if (openDirBtn) {
-        openDirBtn.addEventListener('click', () => {
-          // Get directory path from file path
-          const dirPath = filePath.substring(0, filePath.lastIndexOf(path.sep));
-          console.log('Open directory button clicked for:', dirPath);
-          window.electronAPI.openFile(dirPath);
-        });
-      }
-    }, 100); // Small timeout to ensure the DOM is updated
+    // Add a button to open the file
+    const openButton = document.createElement('button');
+    openButton.textContent = 'Open Recording';
+    openButton.className = 'btn primary open-file-btn';
+    openButton.onclick = () => {
+      window.electronAPI.openFile(filePath);
+    };
+    
+    // Add the button to the recording message element
+    recordingMessageEl.appendChild(document.createElement('br'));
+    recordingMessageEl.appendChild(openButton);
   });
 });
 

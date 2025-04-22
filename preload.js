@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Send a message to the main process
   send: (channel, data) => {
     // Only allow certain channels to be sent
-    let validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'open-file', 'pauseRecording', 'resumeRecording'];
+    let validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'open-file', 'pauseRecording', 'resumeRecording', 'startCanvasRecording', 'sendBlobChunk'];
     if (validChannels.includes(channel)) {
       console.log('Sending IPC message:', channel);
       ipcRenderer.send(channel, data);
@@ -49,6 +49,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startRecording: () => {
     console.log('Start recording called from renderer');
     ipcRenderer.send('startRecording');
+  },
+  // Start canvas recording (new method)
+  startCanvasRecording: () => {
+    console.log('Start canvas recording called from renderer');
+    ipcRenderer.send('startCanvasRecording');
+  },
+  // Send blob chunk to main process (new method)
+  sendBlobChunk: (chunkData) => {
+    ipcRenderer.send('sendBlobChunk', chunkData);
   },
   // Stop recording
   stopRecording: () => {

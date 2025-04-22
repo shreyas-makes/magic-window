@@ -395,22 +395,18 @@ h1 {
 
 /* Timer Display */
 .timer {
-  font-family: monospace;
-  font-size: 24px;
+  font-size: 48px;
   font-weight: bold;
-  padding: 10px;
-  margin: 10px 0;
-  background-color: #212529;
-  color: #20c997;
-  border-radius: 4px;
-  display: inline-block;
-  min-width: 120px;
+  margin-top: 20px;
   text-align: center;
+  color: #2c3e50;
+  font-family: monospace;
 }
 
 /* Recording Status */
 .paused {
-  color: #fd7e14;
+  background-color: #fff3cd;
+  color: #856404;
   font-weight: bold;
 }
 
@@ -458,4 +454,29 @@ h1 {
   height: 100%;
   background-color: #28a745;
   transition: width 0.3s ease;
+}
+
+/* Canvas container styles */
+.canvas-container {
+  max-width: 1200px;
+  margin: 20px auto;
+  background-color: #222;
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+#main-canvas {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
+
+/* Video element (hidden) */
+#source-video {
+  position: absolute;
+  left: -9999px;
+  visibility: hidden;
 } 

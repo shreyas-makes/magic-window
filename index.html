@@ -12,6 +12,12 @@
     <h1 class="title">Magic Window Recorder</h1>
     <div id="status" class="status">Initializing...</div>
     
+    <!-- Canvas container for Pixi.js -->
+    <div class="section canvas-container">
+      <canvas id="main-canvas" width="3840" height="2160"></canvas>
+      <video id="source-video" autoplay muted style="display: none;"></video>
+    </div>
+    
     <div class="section source-selection">
       <h2 class="section-title">Select Recording Source</h2>
       <div class="controls">
@@ -56,6 +62,8 @@
     </div>
   </div>
 
+  <!-- Include Pixi.js -->
+  <script src="node_modules/pixi.js/dist/pixi.min.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
