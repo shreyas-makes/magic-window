@@ -366,6 +366,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateConcatenationUI(data);
   });
   
+  // Listen for recording limit reached
+  window.electronAPI.onRecordingLimitReached(() => {
+    console.log('Recording limit reached (2 hours)');
+    
+    // Update UI to show limit reached message
+    statusEl.textContent = 'Recording stopped: 2-hour limit reached';
+    statusEl.className = 'status warning';
+    
+    recordingMessageEl.textContent = 'Recording stopped automatically after reaching the 2-hour limit';
+    recordingMessageEl.className = 'warning';
+  });
+  
   // Listen for recording errors
   window.electronAPI.on('recordingError', (error) => {
     console.error('Recording error:', error);

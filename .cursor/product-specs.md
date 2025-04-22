@@ -5,7 +5,7 @@
 ### 1.1 Basic Recording Functionality
 - Notarized macOS Electron 35 app
 - Responsive window sizing (80% of screen dimensions)
-- 4K 60 FPS capture with unlimited duration
+- 4K 60 FPS capture with maximum 2-hour duration
 - Fragmented MP4 local storage
 - CPU usage ≤30% on M1 Pro with VideoToolbox HEVC
 - Dropped frames ≤0.5% over two hours
@@ -67,9 +67,10 @@
 - Temp folder for active recording segments
 - Auto-cleanup of temp files on successful completion
 - Recovery option for interrupted recordings
+- Hard limit of 2-hour maximum recording duration
 
 ### 3.3 File Handling
-- 10-minute segment rolls for unlimited duration
+- 10-minute segment rolls for efficient storage
 - Auto-concatenation of segments after recording completion
 
 ## 4. Testing Requirements

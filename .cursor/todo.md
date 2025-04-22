@@ -40,24 +40,24 @@ Phase 2: UI & Basic Controls
 [x] Install and use electron-store to persist the chosen save path
 [x] Update saving logic to use the stored path (use basic timestamped filename for now)
 [x] Add basic isPaused state variable (main) and placeholder Pause/Resume buttons/IPC (renderer/main)
-[ ] Step 5: Storage - File Naming, Structure, Segmentation
+[x] Step 5: Storage - File Naming, Structure, Segmentation
 [x] Create helper function for final file naming (Magic Window Recording - YYYY-MM-DD at HH.MM.SS.mp4)
 [x] Create helper function for directory structure ([BasePath]/Magic Window/YYYY-MM/), ensure directory creation
-[ ] Modify mediaRecorder.start() call to include timeslice (e.g., 10 minutes or 10 seconds for testing)
-[ ] On startRecording, create a unique temporary directory (fs.mkdtemp)
-[ ] Modify mediaRecorder.ondataavailable to save each chunk as segment_N.mp4 in the temp directory
-[ ] Step 6: Storage - Concatenation, Cleanup, Disk Check
-[ ] Install fluent-ffmpeg and ffmpeg-static
-[ ] Configure fluent-ffmpeg to use ffmpeg-static binary path
-[ ] In mediaRecorder.onstop, implement concatenation of segments using ffmpeg().mergeToFile() or concat demuxer
-[ ] Save concatenated file to final path/name/structure
-[ ] On successful concatenation, delete the temporary session directory (fs.rmSync)
-[ ] Add error handling for concatenation (log, notify user, do not delete temps)
-[ ] Install check-disk-space
-[ ] Implement periodic disk space check during recording (setInterval)
-[ ] Send IPC message to renderer for 'low' (<2GB) or 'critical' (<100MB) disk space
-[ ] Implement auto-stop recording on 'critical' disk space
-[ ] Update renderer UI to display disk space warnings
+[x] Modify mediaRecorder.start() call to include timeslice (e.g., 10 minutes or 10 seconds for testing)
+[x] On startRecording, create a unique temporary directory (fs.mkdtemp)
+[x] Modify mediaRecorder.ondataavailable to save each chunk as segment_N.mp4 in the temp directory
+[x] Step 6: Storage - Concatenation, Cleanup, Disk Check
+[x] Install fluent-ffmpeg and ffmpeg-static
+[x] Configure fluent-ffmpeg to use ffmpeg-static binary path
+[x] In mediaRecorder.onstop, implement concatenation of segments using ffmpeg().mergeToFile() or concat demuxer
+[x] Save concatenated file to final path/name/structure
+[x] On successful concatenation, delete the temporary session directory (fs.rmSync)
+[x] Add error handling for concatenation (log, notify user, do not delete temps)
+[x] Install check-disk-space
+[x] Implement periodic disk space check during recording (setInterval)
+[x] Send IPC message to renderer for 'low' (<2GB) or 'critical' (<100MB) disk space
+[x] Implement auto-stop recording on 'critical' disk space
+[x] Update renderer UI to display disk space warnings
 
 
 
@@ -137,8 +137,8 @@ Phase 5: Zoom UI & Interaction
 Phase 6: Integration, Polishing & Deployment
 [x] Step 14: HEVC, Performance Tuning & Pause/Resume
 [ ] Check MediaRecorder.isTypeSupported for HEVC (hvc1) in renderer
-[ ] Configure MediaRecorder mimeType for HEVC if supported (fallback to H.264)
-[ ] Set appropriate videoBitsPerSecond for 4K/60FPS HEVC (~20-40 Mbps)
+[x] Configure MediaRecorder mimeType for HEVC if supported (fallback to H.264)
+[x] Set appropriate videoBitsPerSecond for 4K/60FPS HEVC (~20-40 Mbps)
 [ ] Profile CPU/GPU/RAM/FPS during recording (baseline & zoom) using DevTools/Activity Monitor
 [ ] Optimize Pixi rendering, IPC frequency, snapshot generation as needed
 [ ] Test for dropped frames over long recording (aim for <= 0.5%)
@@ -151,8 +151,8 @@ Phase 6: Integration, Polishing & Deployment
 [ ] Review all UI elements (index.html, panel.html) for ARIA attributes/labels
 [ ] Add aria-live regions for status updates (timer, zoom level) if possible
 [ ] Manually test entire UI flow with VoiceOver
-[ ] Wrap critical operations in try...catch blocks (main & renderer), log errors
-[ ] Implement mediaRecorder.onerror handler (log, stop, notify)
+[x] Wrap critical operations in try...catch blocks (main & renderer), log errors
+[x] Implement mediaRecorder.onerror handler (log, stop, notify)
 [ ] Display non-modal UI warning for zoom-related performance drops
 [ ] On app startup (main.js), check for leftover temp session directories
 [ ] If found, use dialog.showMessageBox to prompt user for recovery attempt

@@ -4,10 +4,23 @@ const fs = require('fs');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static').path;
 const checkDiskSpace = require('check-disk-space').default;
 
-// Set ffmpeg path to the static binary
+// Set ffmpeg and ffprobe paths to the static binaries
 ffmpeg.setFfmpegPath(ffmpegStatic);
+try {
+  // Try to set ffprobe path
+  if (fs.existsSync(ffprobeStatic)) {
+    ffmpeg.setFfprobePath(ffprobeStatic);
+    console.log('FFprobe path set to:', ffprobeStatic);
+  } else {
+    console.warn('FFprobe not found at expected path:', ffprobeStatic);
+    console.warn('Will attempt concatenation without ffprobe');
+  }
+} catch (err) {
+  console.error('Error setting ffprobe path:', err);
+}
 
 // Simple settings storage implementation
 class Settings {
@@ -59,6 +72,9 @@ let currentSavePath = null;
 let tempSessionDir = null; // For storing temporary session directory
 let segmentIndex = 0; // For tracking segment numbers
 let diskSpaceInterval = null; // For disk space checking interval
+let recordingTimer = null; // For tracking recording duration
+let recordingSeconds = 0; // For counting recording seconds
+const MAX_RECORDING_SECONDS = 7200; // 2 hours (7200 seconds)
 
 // Disk space thresholds
 const DISK_SPACE_LOW_THRESHOLD = 2 * 1024 * 1024 * 1024; // 2GB
@@ -270,7 +286,7 @@ async function concatenateSegments(tempDir) {
   
   try {
     // Get list of segment files
-    const segmentFiles = await ipcMain.handle('listSegments', null, tempDir);
+    const segmentFiles = await listSegments(tempDir);
     
     if (!segmentFiles || segmentFiles.length === 0) {
       throw new Error('No segment files found');
@@ -288,70 +304,213 @@ async function concatenateSegments(tempDir) {
     console.log(`Concatenating ${segmentFiles.length} segments to: ${outputPath}`);
     
     return new Promise((resolve, reject) => {
-      // Create a new ffmpeg command
-      const command = ffmpeg();
-      
-      // Add each segment as input
-      segmentFiles.forEach(segment => {
-        command.input(segment.path);
-      });
-      
-      // Concatenate segments to output file
-      command
-        .on('start', cmdLine => {
-          console.log('FFmpeg started with command:', cmdLine);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('concatenationStatus', { status: 'started' });
-          }
-        })
-        .on('progress', progress => {
-          console.log(`FFmpeg processing: ${JSON.stringify(progress)}`);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('concatenationStatus', { 
-              status: 'progress', 
-              progress 
-            });
-          }
-        })
-        .on('error', error => {
-          console.error('Error concatenating segments:', error);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('concatenationStatus', { 
-              status: 'error', 
-              error: error.message 
-            });
-            dialog.showErrorBox(
-              'Error Saving Recording', 
-              `Failed to process recording segments. Temporary files are preserved at: ${tempDir}`
-            );
-          }
-          reject(error);
-        })
-        .on('end', () => {
-          console.log('FFmpeg concatenation complete');
+      try {
+        // Always use concat demuxer method for better reliability
+        // Create a concat file that lists all segments
+        const concatFilePath = path.join(tempDir, 'concat_list.txt');
+        const concatContent = segmentFiles
+          .map(segment => `file '${segment.path.replace(/'/g, "'\\''")}'`)
+          .join('\n');
           
-          // Clean up temporary directory
-          try {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-            console.log(`Temporary directory ${tempDir} removed`);
-          } catch (cleanupError) {
-            console.error('Error cleaning up temporary directory:', cleanupError);
-          }
-          
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('concatenationStatus', { 
-              status: 'complete', 
-              outputPath 
-            });
-          }
-          
-          resolve(outputPath);
-        })
-        .mergeToFile(outputPath, tempDir);
+        fs.writeFileSync(concatFilePath, concatContent);
+        console.log('Created concat file with content:', concatContent);
+        
+        // Create a new ffmpeg command using the demuxer method
+        const command = ffmpeg()
+          .input(concatFilePath)
+          .inputOptions(['-f', 'concat', '-safe', '0'])
+          .outputOptions('-c copy') // Copy both video and audio codec without re-encoding
+          .output(outputPath);
+        
+        // Set event handlers
+        command
+          .on('start', cmdLine => {
+            console.log('FFmpeg started with command:', cmdLine);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', { status: 'started' });
+            }
+          })
+          .on('progress', progress => {
+            console.log(`FFmpeg processing: ${JSON.stringify(progress)}`);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', { 
+                status: 'progress', 
+                progress 
+              });
+            }
+          })
+          .on('error', async error => {
+            console.error('Error concatenating segments with FFmpeg:', error);
+            
+            // Try fallback method for very small segments
+            console.log('Attempting fallback method for concatenation...');
+            
+            try {
+              // Simple binary file concatenation
+              const writeStream = fs.createWriteStream(outputPath);
+              
+              for (const segment of segmentFiles) {
+                console.log(`Concatenating segment: ${segment.name}`);
+                
+                if (segment.size > 0) {
+                  // Read segment data and write to output file
+                  const segmentData = fs.readFileSync(segment.path);
+                  writeStream.write(segmentData);
+                } else {
+                  console.warn(`Skipping zero-byte segment: ${segment.name}`);
+                }
+              }
+              
+              writeStream.end();
+              
+              // Wait for write to complete
+              await new Promise((res) => writeStream.on('finish', res));
+              
+              console.log('Fallback concatenation complete');
+              
+              // Clean up temporary directory
+              try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                console.log(`Temporary directory ${tempDir} removed`);
+              } catch (cleanupError) {
+                console.error('Error cleaning up temporary directory:', cleanupError);
+              }
+              
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('concatenationStatus', { 
+                  status: 'complete', 
+                  outputPath,
+                  note: 'Used fallback method due to FFmpeg error'
+                });
+              }
+              
+              resolve(outputPath);
+            } catch (fallbackError) {
+              console.error('Fallback concatenation failed:', fallbackError);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('concatenationStatus', { 
+                  status: 'error', 
+                  error: `Both FFmpeg and fallback methods failed: ${fallbackError.message}` 
+                });
+                dialog.showErrorBox(
+                  'Error Saving Recording', 
+                  `Failed to process recording segments. Temporary files are preserved at: ${tempDir}`
+                );
+              }
+              reject(fallbackError);
+            }
+          })
+          .on('end', () => {
+            console.log('FFmpeg concatenation complete');
+            
+            // Clean up temporary directory
+            try {
+              fs.rmSync(tempDir, { recursive: true, force: true });
+              console.log(`Temporary directory ${tempDir} removed`);
+            } catch (cleanupError) {
+              console.error('Error cleaning up temporary directory:', cleanupError);
+            }
+            
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', { 
+                status: 'complete', 
+                outputPath 
+              });
+            }
+            
+            resolve(outputPath);
+          });
+        
+        // Run the command
+        command.run();
+      } catch (error) {
+        console.error('FFmpeg command setup error:', error);
+        reject(error);
+      }
     });
   } catch (error) {
     console.error('Error in concatenation setup:', error);
     throw error;
+  }
+}
+
+// Function to list segments in a directory
+async function listSegments(dirPath) {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      throw new Error('Directory does not exist');
+    }
+    
+    // Get all files in the directory
+    const files = fs.readdirSync(dirPath);
+    
+    // Filter for segment files and sort them
+    const segmentFiles = files
+      .filter(file => file.startsWith('segment_') && (file.endsWith('.mp4') || file.endsWith('.webm')))
+      .sort((a, b) => {
+        // Extract segment numbers for proper sorting
+        const numA = parseInt(a.replace('segment_', '').split('.')[0]);
+        const numB = parseInt(b.replace('segment_', '').split('.')[0]);
+        return numA - numB;
+      })
+      .map(file => {
+        const fullPath = path.join(dirPath, file);
+        const stats = fs.statSync(fullPath);
+        return {
+          name: file,
+          path: fullPath,
+          size: stats.size,
+          // Format size in KB or MB
+          formattedSize: stats.size > 1024 * 1024 
+            ? `${(stats.size / (1024 * 1024)).toFixed(2)} MB` 
+            : `${(stats.size / 1024).toFixed(2)} KB`
+        };
+      });
+    
+    return segmentFiles;
+  } catch (error) {
+    console.error('Error listing segments:', error);
+    throw error;
+  }
+}
+
+// Function to start the recording timer
+function startRecordingTimer() {
+  // Reset the timer if it exists
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingSeconds = 0;
+  }
+  
+  recordingSeconds = 0;
+  
+  // Start a timer that counts seconds
+  recordingTimer = setInterval(() => {
+    if (!isPaused) {
+      recordingSeconds++;
+      
+      // If we've reached the 2-hour limit, stop recording
+      if (recordingSeconds >= MAX_RECORDING_SECONDS) {
+        console.log('Recording reached 2-hour limit. Stopping automatically.');
+        
+        // Send notification to renderer
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('recordingLimitReached');
+        }
+        
+        // Stop the recording
+        ipcMain.emit('stopRecording');
+      }
+    }
+  }, 1000);
+}
+
+// Function to stop the recording timer
+function stopRecordingTimer() {
+  if (recordingTimer) {
+    clearInterval(recordingTimer);
+    recordingTimer = null;
+    recordingSeconds = 0;
   }
 }
 
@@ -493,6 +652,9 @@ app.whenReady().then(() => {
       // Start disk space monitoring
       startDiskSpaceMonitoring();
       
+      // Start recording timer
+      startRecordingTimer();
+      
       console.log('Recording started, updated UI state');
       
       // Handle window close
@@ -505,6 +667,9 @@ app.whenReady().then(() => {
           
           // Stop disk space monitoring
           stopDiskSpaceMonitoring();
+          
+          // Stop recording timer
+          stopRecordingTimer();
         }
       });
     } catch (error) {
@@ -523,6 +688,17 @@ app.whenReady().then(() => {
         throw new Error('No temporary session directory available');
       }
       
+      // Skip segments with zero size (completely empty frames)
+      if (!buffer || buffer.byteLength === 0) {
+        console.warn(`Skipping segment ${segmentNumber} - empty (0 bytes)`);
+        return;
+      }
+      
+      // Log small segments but don't skip them
+      if (buffer.byteLength < 1000) {
+        console.warn(`Small segment ${segmentNumber} detected (${buffer.byteLength} bytes) - will try to process anyway`);
+      }
+      
       // Determine file extension based on MIME type
       let fileExtension = '.mp4'; // Default
       if (mimeType && mimeType.includes('webm')) {
@@ -536,7 +712,13 @@ app.whenReady().then(() => {
       // Write segment data to file
       fs.writeFileSync(segmentPath, Buffer.from(buffer));
       
-      console.log(`Segment ${segmentNumber} saved to: ${segmentPath}`);
+      // Verify the file was written correctly
+      const stats = fs.statSync(segmentPath);
+      console.log(`Segment ${segmentNumber} saved to: ${segmentPath} (${stats.size} bytes)`);
+      
+      if (stats.size === 0) {
+        console.warn(`Warning: Segment ${segmentNumber} has zero bytes`);
+      }
     } catch (error) {
       console.error('Error saving segment:', error);
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -545,42 +727,12 @@ app.whenReady().then(() => {
     }
   });
   
-  // Handle listing segment files
+  // Handle listing segment files for the UI
   ipcMain.handle('listSegments', async (event, dirPath) => {
     try {
-      if (!fs.existsSync(dirPath)) {
-        throw new Error('Directory does not exist');
-      }
-      
-      // Get all files in the directory
-      const files = fs.readdirSync(dirPath);
-      
-      // Filter for segment files and sort them
-      const segmentFiles = files
-        .filter(file => file.startsWith('segment_') && (file.endsWith('.mp4') || file.endsWith('.webm')))
-        .sort((a, b) => {
-          // Extract segment numbers for proper sorting
-          const numA = parseInt(a.replace('segment_', '').split('.')[0]);
-          const numB = parseInt(b.replace('segment_', '').split('.')[0]);
-          return numA - numB;
-        })
-        .map(file => {
-          const fullPath = path.join(dirPath, file);
-          const stats = fs.statSync(fullPath);
-          return {
-            name: file,
-            path: fullPath,
-            size: stats.size,
-            // Format size in KB or MB
-            formattedSize: stats.size > 1024 * 1024 
-              ? `${(stats.size / (1024 * 1024)).toFixed(2)} MB` 
-              : `${(stats.size / 1024).toFixed(2)} KB`
-          };
-        });
-      
-      return segmentFiles;
+      return await listSegments(dirPath);
     } catch (error) {
-      console.error('Error listing segments:', error);
+      console.error('Error handling listSegments:', error);
       throw error;
     }
   });
@@ -603,11 +755,65 @@ app.whenReady().then(() => {
     
     // Process and concatenate segments
     try {
-      const outputPath = await concatenateSegments(tempSessionDir);
+      // Check if we have valid segments to process
+      const segments = await listSegments(tempSessionDir);
       
-      // Notify renderer that recording is saved
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingSaved', outputPath);
+      if (!segments || segments.length === 0) {
+        throw new Error('No recording segments found. The recording may be empty.');
+      }
+      
+      // Consider all non-zero segments as valid (even small ones)
+      const validSegments = segments.filter(segment => segment.size > 0);
+      
+      if (validSegments.length === 0) {
+        throw new Error('All recording segments are empty. No valid video data was captured.');
+      }
+      
+      console.log(`Found ${validSegments.length} valid segments out of ${segments.length} total`);
+      
+      // Log warning about small segments
+      const smallSegments = validSegments.filter(segment => segment.size < 10000);
+      if (smallSegments.length > 0) {
+        console.warn(`Warning: ${smallSegments.length} segments are smaller than 10KB and may have limited content`);
+      }
+      
+      // If we only have one segment, just copy it instead of concatenating
+      if (validSegments.length === 1) {
+        console.log('Only one valid segment found, copying directly without concatenation');
+        
+        // Ensure target directory exists
+        const outputDir = getCurrentRecordingDir(currentSavePath);
+        ensureDirExists(outputDir);
+        
+        // Create output file name with timestamp
+        const timestamp = getFormattedTimestamp();
+        const outputFileName = `Magic Window Recording - ${timestamp}.mp4`;
+        const outputPath = path.join(outputDir, outputFileName);
+        
+        // Copy the file
+        fs.copyFileSync(validSegments[0].path, outputPath);
+        console.log(`Copied segment to final recording at: ${outputPath}`);
+        
+        // Notify renderer that recording is saved
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('recordingSaved', outputPath);
+        }
+        
+        // Clean up temporary directory
+        try {
+          fs.rmSync(tempSessionDir, { recursive: true, force: true });
+          console.log(`Temporary directory ${tempSessionDir} removed`);
+        } catch (cleanupError) {
+          console.error('Error cleaning up temporary directory:', cleanupError);
+        }
+      } else {
+        // Proceed with concatenation
+        const outputPath = await concatenateSegments(tempSessionDir);
+        
+        // Notify renderer that recording is saved
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('recordingSaved', outputPath);
+        }
       }
     } catch (error) {
       console.error('Error processing recording:', error);
@@ -634,6 +840,9 @@ app.whenReady().then(() => {
       
       // Stop disk space monitoring
       stopDiskSpaceMonitoring();
+      
+      // Stop recording timer
+      stopRecordingTimer();
       
       if (recordingWindow) {
         console.log('Sending stop signal to recording window');

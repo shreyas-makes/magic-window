@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Register handler for IPC events from main process
   on: (channel, func) => {
     // Only allow certain channels to be received
-    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus'];
+    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus', 'recordingLimitReached'];
     if (validChannels.includes(channel)) {
       console.log('Registering handler for channel:', channel);
       
@@ -77,5 +77,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Concatenation status handler
   onConcatenationStatus: (callback) => {
     ipcRenderer.on('concatenationStatus', (event, data) => callback(data));
+  },
+  // Recording limit reached handler
+  onRecordingLimitReached: (callback) => {
+    ipcRenderer.on('recordingLimitReached', (event) => callback());
   }
 }); 

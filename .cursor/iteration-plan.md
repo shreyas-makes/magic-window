@@ -66,13 +66,14 @@ Chunk 3.2: Segmented Recording
 - Step 3.2.1: Modify MediaRecorder setup: use timeslice parameter (e.g., recorder.start(1000 * 60 * 10)) to trigger dataavailable every 10 minutes
 - Step 3.2.2: Create a temporary directory for the current recording session
 - Step 3.2.3: Save each Blob chunk received from dataavailable as a separate temporary segment file within the session directory (e.g., segment_0.mp4, segment_1.mp4)
-Test Goal: During a >10min recording, multiple segment files are created in a temporary location
+- Step 3.2.4: Implement a 2-hour recording duration limit with a timer and automatic stop
+Test Goal: During recording, multiple segment files are created; recording stops automatically at 2 hours
 
 Chunk 3.3: Post-Recording Concatenation & Cleanup
 - Step 3.3.1: On recording stop, identify all segment files for the session
 - Step 3.3.2: Use ffmpeg (likely requiring bundling a static build or using fluent-ffmpeg with user-provided ffmpeg) to concatenate the segments into the final MP4 file (using the naming/structure from 3.1). Crucial: Use a safe concat method for fragmented MP4
 - Step 3.3.3: After successful concatenation, delete the temporary segment files and the temporary session directory
-Test Goal: After stopping a >10min recording, a single final MP4 is created, and temporary files are removed
+Test Goal: After stopping a recording, a single final MP4 is created, and temporary files are removed
 
 Chunk 3.4: Disk Space Monitoring & Warning
 - Step 3.4.1: Periodically check available disk space on the target save volume during recording (e.g., using Node.js fs or a library like check-disk-space)
