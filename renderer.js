@@ -1,4 +1,6 @@
 // This file runs in the renderer process
+// Import path module from Node.js through the preload script
+const path = { sep: '/' }; // Simple path separator for use in the renderer
 
 // Timer variables
 let timerInterval = null;
@@ -42,6 +44,81 @@ function resetTimer() {
   secondsElapsed = 0;
   const timerDisplay = document.getElementById('timer-display');
   timerDisplay.textContent = formatTime(secondsElapsed);
+}
+
+// Function to format bytes to human-readable form
+function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 Bytes';
+  
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+// Function to update disk space UI
+function updateDiskSpaceUI(data) {
+  const diskSpaceEl = document.getElementById('disk-space-status');
+  if (!diskSpaceEl) return;
+  
+  // Format free space in human-readable form
+  const freeSpace = formatBytes(data.free);
+  
+  // Update the UI based on status
+  if (data.status === 'critical') {
+    diskSpaceEl.textContent = `CRITICAL: Only ${freeSpace} free`;
+    diskSpaceEl.className = 'status error';
+  } else if (data.status === 'low') {
+    diskSpaceEl.textContent = `Low disk space: ${freeSpace} free`;
+    diskSpaceEl.className = 'status warning';
+  } else {
+    diskSpaceEl.textContent = `Disk space: ${freeSpace} free`;
+    diskSpaceEl.className = 'status success';
+  }
+}
+
+// Function to update concatenation status UI
+function updateConcatenationUI(data) {
+  const statusEl = document.getElementById('status');
+  const recordingMessageEl = document.getElementById('recordingMessage');
+  
+  switch (data.status) {
+    case 'started':
+      statusEl.textContent = 'Processing recording...';
+      statusEl.className = 'status pending';
+      recordingMessageEl.textContent = 'Processing and combining video segments...';
+      recordingMessageEl.className = 'pending';
+      break;
+    
+    case 'progress':
+      // Update progress if available
+      if (data.progress) {
+        let progressText = 'Processing: ';
+        if (data.progress.percent) {
+          progressText += `${Math.round(data.progress.percent)}%`;
+        } else if (data.progress.frames) {
+          progressText += `${data.progress.frames} frames`;
+        }
+        statusEl.textContent = progressText;
+      }
+      break;
+    
+    case 'error':
+      statusEl.textContent = `Error processing recording: ${data.error}`;
+      statusEl.className = 'status error';
+      recordingMessageEl.textContent = `Error: ${data.error}`;
+      recordingMessageEl.className = 'error';
+      break;
+    
+    case 'complete':
+      statusEl.textContent = 'Recording processed successfully';
+      statusEl.className = 'status success';
+      // The recordingSaved event will update the message
+      break;
+  }
 }
 
 // Function to populate the sources dropdown
@@ -144,6 +221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const recordingMessageEl = document.getElementById('recordingMessage');
   const currentSavePathEl = document.getElementById('currentSavePath');
   const changeSaveLocationBtn = document.getElementById('changeSaveLocation');
+  const diskSpaceEl = document.getElementById('disk-space-status');
   
   console.log('Renderer process started');
   
@@ -276,6 +354,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUIState(state);
   });
   
+  // Listen for disk space warnings
+  window.electronAPI.onDiskSpaceWarning((data) => {
+    console.log('Disk space warning:', data);
+    updateDiskSpaceUI(data);
+  });
+  
+  // Listen for concatenation status updates
+  window.electronAPI.onConcatenationStatus((data) => {
+    console.log('Concatenation status update:', data);
+    updateConcatenationUI(data);
+  });
+  
   // Listen for recording errors
   window.electronAPI.on('recordingError', (error) => {
     console.error('Recording error:', error);
@@ -302,89 +392,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusEl.textContent = 'Recording saved successfully';
     statusEl.className = 'status success';
     
-    try {
-      // Get list of segment files
-      const segments = await window.electronAPI.listSegments(filePath);
+    // Update recording message
+    recordingMessageEl.innerHTML = `
+      <div>Recording saved successfully!</div>
+      <div class="file-path">Location: <span class="path">${filePath}</span></div>
+      <button id="openVideoBtn" class="open-file-btn">Play Recording</button>
+      <button id="openDirBtn" class="open-file-btn">Open Directory</button>
+    `;
+    recordingMessageEl.className = 'success';
+    
+    // Add click handler for buttons
+    setTimeout(() => {
+      const openVideoBtn = document.getElementById('openVideoBtn');
+      const openDirBtn = document.getElementById('openDirBtn');
       
-      if (segments.length === 0) {
-        recordingMessageEl.innerHTML = `
-          <div>No recording segments found in the directory.</div>
-          <div class="file-path">Location: <span class="path">${filePath}</span></div>
-          <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
-        `;
-        recordingMessageEl.className = 'warning';
-      } else {
-        // Create HTML for segment list
-        const segmentListHTML = segments.map((segment, index) => `
-          <div class="segment-item">
-            <span class="segment-name">${segment.name}</span>
-            <span class="segment-size">(${segment.formattedSize})</span>
-            <button class="play-segment-btn" data-path="${segment.path}">Play</button>
-          </div>
-        `).join('');
-        
-        // Make the file path more visible and add a clickable link
-        recordingMessageEl.innerHTML = `
-          <div>Recording segments saved successfully!</div>
-          <div class="file-path">Location: <span class="path">${filePath}</span></div>
-          <div class="segments-container">
-            <h4>Recording Segments:</h4>
-            <div class="segment-list">
-              ${segmentListHTML}
-            </div>
-          </div>
-          <div class="note">
-            <strong>Note:</strong> Individual segments may not play correctly. 
-            The concatenation feature to create a complete video will be implemented soon.
-          </div>
-          <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
-        `;
-        recordingMessageEl.className = 'success';
+      if (openVideoBtn) {
+        openVideoBtn.addEventListener('click', () => {
+          console.log('Open video button clicked for:', filePath);
+          window.electronAPI.openFile(filePath);
+        });
       }
       
-      // Add click handler for the open directory button
-      setTimeout(() => {
-        const openDirectoryBtn = document.getElementById('openDirectoryBtn');
-        if (openDirectoryBtn) {
-          openDirectoryBtn.addEventListener('click', () => {
-            console.log('Open directory button clicked for:', filePath);
-            window.electronAPI.openFile(filePath);
-          });
-        }
-        
-        // Add click handlers for play segment buttons
-        const playButtons = document.querySelectorAll('.play-segment-btn');
-        playButtons.forEach(button => {
-          button.addEventListener('click', () => {
-            const segmentPath = button.getAttribute('data-path');
-            console.log('Play segment button clicked for:', segmentPath);
-            window.electronAPI.openFile(segmentPath);
-          });
+      if (openDirBtn) {
+        openDirBtn.addEventListener('click', () => {
+          // Get directory path from file path
+          const dirPath = filePath.substring(0, filePath.lastIndexOf(path.sep));
+          console.log('Open directory button clicked for:', dirPath);
+          window.electronAPI.openFile(dirPath);
         });
-      }, 100); // Small timeout to ensure the DOM is updated
-    } catch (error) {
-      console.error('Error listing segments:', error);
-      
-      // Fallback to simple display if segment listing fails
-      recordingMessageEl.innerHTML = `
-        <div>Recording segments saved successfully!</div>
-        <div class="file-path">Location: <span class="path">${filePath}</span></div>
-        <div class="error-message">Error listing segments: ${error.message}</div>
-        <button id="openDirectoryBtn" class="open-file-btn">Open Directory</button>
-      `;
-      recordingMessageEl.className = 'warning';
-      
-      // Add click handler for the open directory button
-      setTimeout(() => {
-        const openDirectoryBtn = document.getElementById('openDirectoryBtn');
-        if (openDirectoryBtn) {
-          openDirectoryBtn.addEventListener('click', () => {
-            console.log('Open directory button clicked for:', filePath);
-            window.electronAPI.openFile(filePath);
-          });
-        }
-      }, 100); // Small timeout to ensure the DOM is updated
-    }
+      }
+    }, 100); // Small timeout to ensure the DOM is updated
   });
 });
 

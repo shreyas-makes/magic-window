@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Register handler for IPC events from main process
   on: (channel, func) => {
     // Only allow certain channels to be received
-    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording'];
+    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus'];
     if (validChannels.includes(channel)) {
       console.log('Registering handler for channel:', channel);
       
@@ -69,5 +69,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFile: (filePath) => {
     console.log('Opening file:', filePath);
     ipcRenderer.send('open-file', filePath);
+  },
+  // Disk space warning handler
+  onDiskSpaceWarning: (callback) => {
+    ipcRenderer.on('diskSpaceWarning', (event, data) => callback(data));
+  },
+  // Concatenation status handler
+  onConcatenationStatus: (callback) => {
+    ipcRenderer.on('concatenationStatus', (event, data) => callback(data));
   }
 }); 

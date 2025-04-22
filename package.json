@@ -12,6 +12,9 @@
     "electron": "^35.2.0"
   },
   "dependencies": {
-    "electron-store": "^8.1.0"
+    "check-disk-space": "^3.4.0",
+    "electron-store": "^8.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3"
   }
 }

@@ -2,6 +2,12 @@ const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShort
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+const checkDiskSpace = require('check-disk-space').default;
+
+// Set ffmpeg path to the static binary
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 // Simple settings storage implementation
 class Settings {
@@ -52,6 +58,11 @@ let mainWindow = null; // Global reference to main window
 let currentSavePath = null;
 let tempSessionDir = null; // For storing temporary session directory
 let segmentIndex = 0; // For tracking segment numbers
+let diskSpaceInterval = null; // For disk space checking interval
+
+// Disk space thresholds
+const DISK_SPACE_LOW_THRESHOLD = 2 * 1024 * 1024 * 1024; // 2GB
+const DISK_SPACE_CRITICAL_THRESHOLD = 100 * 1024 * 1024; // 100MB
 
 function createWindow() {
   // Get the primary display's work area dimensions
@@ -190,6 +201,160 @@ function getCurrentRecordingDir(basePath) {
   return path.join(basePath, 'Magic Window', `${year}-${month}`);
 }
 
+// Function to check disk space
+async function checkDiskSpaceAvailable() {
+  if (!currentSavePath) return;
+  
+  try {
+    const diskSpace = await checkDiskSpace(currentSavePath);
+    
+    if (diskSpace.free < DISK_SPACE_CRITICAL_THRESHOLD) {
+      // Critical disk space - stop recording and send warning
+      console.warn('Critical disk space: stopping recording');
+      if (isRecording) {
+        ipcMain.emit('stopRecording');
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('diskSpaceWarning', { status: 'critical', free: diskSpace.free });
+      }
+    } else if (diskSpace.free < DISK_SPACE_LOW_THRESHOLD) {
+      // Low disk space - send warning
+      console.warn('Low disk space warning');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('diskSpaceWarning', { status: 'low', free: diskSpace.free });
+      }
+    } else {
+      // Disk space OK
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('diskSpaceWarning', { status: 'ok', free: diskSpace.free });
+      }
+    }
+  } catch (error) {
+    console.error('Error checking disk space:', error);
+  }
+}
+
+// Function to start disk space monitoring
+function startDiskSpaceMonitoring() {
+  if (diskSpaceInterval) {
+    clearInterval(diskSpaceInterval);
+  }
+  
+  // Check immediately
+  checkDiskSpaceAvailable();
+  
+  // Then check every 30 seconds
+  diskSpaceInterval = setInterval(checkDiskSpaceAvailable, 30000);
+}
+
+// Function to stop disk space monitoring
+function stopDiskSpaceMonitoring() {
+  if (diskSpaceInterval) {
+    clearInterval(diskSpaceInterval);
+    diskSpaceInterval = null;
+  }
+}
+
+// Function to ensure directory exists
+function ensureDirExists(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+// Function to concatenate video segments
+async function concatenateSegments(tempDir) {
+  if (!tempDir || !fs.existsSync(tempDir)) {
+    throw new Error('Temporary directory does not exist');
+  }
+  
+  try {
+    // Get list of segment files
+    const segmentFiles = await ipcMain.handle('listSegments', null, tempDir);
+    
+    if (!segmentFiles || segmentFiles.length === 0) {
+      throw new Error('No segment files found');
+    }
+    
+    // Ensure target directory exists
+    const outputDir = getCurrentRecordingDir(currentSavePath);
+    ensureDirExists(outputDir);
+    
+    // Create output file name with timestamp
+    const timestamp = getFormattedTimestamp();
+    const outputFileName = `Magic Window Recording - ${timestamp}.mp4`;
+    const outputPath = path.join(outputDir, outputFileName);
+    
+    console.log(`Concatenating ${segmentFiles.length} segments to: ${outputPath}`);
+    
+    return new Promise((resolve, reject) => {
+      // Create a new ffmpeg command
+      const command = ffmpeg();
+      
+      // Add each segment as input
+      segmentFiles.forEach(segment => {
+        command.input(segment.path);
+      });
+      
+      // Concatenate segments to output file
+      command
+        .on('start', cmdLine => {
+          console.log('FFmpeg started with command:', cmdLine);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', { status: 'started' });
+          }
+        })
+        .on('progress', progress => {
+          console.log(`FFmpeg processing: ${JSON.stringify(progress)}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', { 
+              status: 'progress', 
+              progress 
+            });
+          }
+        })
+        .on('error', error => {
+          console.error('Error concatenating segments:', error);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', { 
+              status: 'error', 
+              error: error.message 
+            });
+            dialog.showErrorBox(
+              'Error Saving Recording', 
+              `Failed to process recording segments. Temporary files are preserved at: ${tempDir}`
+            );
+          }
+          reject(error);
+        })
+        .on('end', () => {
+          console.log('FFmpeg concatenation complete');
+          
+          // Clean up temporary directory
+          try {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            console.log(`Temporary directory ${tempDir} removed`);
+          } catch (cleanupError) {
+            console.error('Error cleaning up temporary directory:', cleanupError);
+          }
+          
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', { 
+              status: 'complete', 
+              outputPath 
+            });
+          }
+          
+          resolve(outputPath);
+        })
+        .mergeToFile(outputPath, tempDir);
+    });
+  } catch (error) {
+    console.error('Error in concatenation setup:', error);
+    throw error;
+  }
+}
+
 // Create window when app is ready
 app.whenReady().then(() => {
   createWindow();
@@ -287,6 +452,9 @@ app.whenReady().then(() => {
     }
     
     try {
+      // Check disk space before starting
+      await checkDiskSpaceAvailable();
+      
       // Create a unique temporary directory for this recording session
       const tempBaseDir = path.join(os.tmpdir(), 'magic-window-recorder');
       fs.mkdirSync(tempBaseDir, { recursive: true });
@@ -322,6 +490,9 @@ app.whenReady().then(() => {
       isPaused = false;
       sendStateUpdate();
       
+      // Start disk space monitoring
+      startDiskSpaceMonitoring();
+      
       console.log('Recording started, updated UI state');
       
       // Handle window close
@@ -331,6 +502,9 @@ app.whenReady().then(() => {
           isRecording = false;
           isPaused = false;
           sendStateUpdate();
+          
+          // Stop disk space monitoring
+          stopDiskSpaceMonitoring();
         }
       });
     } catch (error) {
@@ -412,12 +586,9 @@ app.whenReady().then(() => {
   });
   
   // Handle recording complete notification
-  ipcMain.on('recording-complete', () => {
+  ipcMain.on('recording-complete', async () => {
     console.log('Recording completed, ready for concatenation');
     console.log(`All segments stored in: ${tempSessionDir}`);
-    console.log(`Final path will be in: ${getCurrentRecordingDir(currentSavePath)}`);
-    
-    // Placeholder for future concatenation logic
     
     isRecording = false;
     isPaused = false;
@@ -427,9 +598,22 @@ app.whenReady().then(() => {
     }
     sendStateUpdate();
     
-    // Send just the path to the temporary directory, not a string with text and path
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('recordingSaved', tempSessionDir);
+    // Stop disk space monitoring
+    stopDiskSpaceMonitoring();
+    
+    // Process and concatenate segments
+    try {
+      const outputPath = await concatenateSegments(tempSessionDir);
+      
+      // Notify renderer that recording is saved
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('recordingSaved', outputPath);
+      }
+    } catch (error) {
+      console.error('Error processing recording:', error);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('recordingError', `Error processing recording: ${error.toString()}`);
+      }
     }
   });
   
@@ -447,6 +631,9 @@ app.whenReady().then(() => {
       isRecording = false;
       isPaused = false;
       sendStateUpdate();
+      
+      // Stop disk space monitoring
+      stopDiskSpaceMonitoring();
       
       if (recordingWindow) {
         console.log('Sending stop signal to recording window');
