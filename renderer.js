@@ -10,6 +10,7 @@ const path = { sep: '/' }; // Simple path separator for use in the renderer
 // Canvas and recording variables
 let app = null; // PIXI application
 let videoSprite = null; // PIXI sprite for video
+let videoTexture = null; // PIXI texture for video
 let mediaRecorder = null; // MediaRecorder instance
 let recordedChunks = []; // Array to hold recorded chunks
 let sourceVideo = null; // Source video element
@@ -1443,7 +1444,7 @@ async function setupPixiRendering() {
     }
     
     // Initialize video sprite from source-video
-    const videoTexture = PIXI.Texture.from(sourceVideo);
+    videoTexture = PIXI.Texture.from(sourceVideo);
     videoSprite = new PIXI.Sprite(videoTexture);
     
     // Set initial sprite position and pivot point
