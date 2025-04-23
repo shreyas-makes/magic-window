@@ -141,20 +141,30 @@ function updateZoomLevelDisplay(level) {
 // Update PiP button state
 function updatePipState(isActive) {
     console.log('Updating PiP state to:', isActive);
-    isPipActive = isActive;
-    togglePipButton.style.backgroundColor = isActive ? '#4CAF50' : '#555';
-    pipContainer.style.display = isActive ? 'block' : 'none';
     
-    // Log the actual display style after setting it
-    console.log('PiP container display style is now:', pipContainer.style.display);
-    
-    if (isActive) {
-        // Initialize PiP canvas if needed when becoming active
-        if (!usePixi && !pipContext) {
-            initializeCanvas2D();
-        } else if (usePixi && !pipApp) {
-            initializePixiCanvas();
+    // Only update if state actually changed
+    if (isPipActive !== isActive) {
+        isPipActive = isActive;
+        togglePipButton.style.backgroundColor = isActive ? '#4CAF50' : '#555';
+        pipContainer.style.display = isActive ? 'block' : 'none';
+        
+        // Force a reflow/redraw to ensure style changes apply immediately
+        void pipContainer.offsetWidth;
+        
+        // Log the actual display style after setting it
+        console.log('PiP container display style is now:', pipContainer.style.display);
+        console.log('PiP container visibility check:', pipContainer.offsetWidth > 0 ? 'visible' : 'hidden');
+        
+        if (isActive) {
+            // Initialize PiP canvas if needed when becoming active
+            if (!usePixi && !pipContext) {
+                initializeCanvas2D();
+            } else if (usePixi && !pipApp) {
+                initializePixiCanvas();
+            }
         }
+    } else {
+        console.log('PiP state unchanged, already:', isActive ? 'active' : 'inactive');
     }
 }
 
@@ -320,6 +330,9 @@ function handleZoomStateUpdate(newZoomState) {
 }
 
 // Set up event listeners for buttons
+let lastButtonClickTime = 0;
+const BUTTON_DEBOUNCE_TIME = 250; // ms
+
 zoomInButton.addEventListener('click', () => {
     console.log('Zoom in clicked');
     window.panelAPI.zoomIn();
@@ -331,7 +344,15 @@ zoomOutButton.addEventListener('click', () => {
 });
 
 togglePipButton.addEventListener('click', () => {
-    console.log('Toggle PiP clicked');
+    // Debounce rapid clicks
+    const now = performance.now();
+    if (now - lastButtonClickTime < BUTTON_DEBOUNCE_TIME) {
+        console.log('Ignoring PiP toggle click - too soon after previous click');
+        return;
+    }
+    lastButtonClickTime = now;
+    
+    console.log('Toggle PiP clicked, current state:', isPipActive);
     window.panelAPI.togglePip();
 });
 

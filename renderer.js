@@ -2329,8 +2329,19 @@ window.electronAPI.on('toggle-pip', () => {
 });
 
 // Add togglePip function
+let lastToggleTime = 0;
+const TOGGLE_DEBOUNCE_TIME = 200; // ms
+
 function togglePip() {
     try {
+        // Debounce repeated toggle calls that come too quickly
+        const now = performance.now();
+        if (now - lastToggleTime < TOGGLE_DEBOUNCE_TIME) {
+            console.log('Ignoring toggle PiP call - too soon after previous toggle');
+            return;
+        }
+        lastToggleTime = now;
+        
         console.log('Current PiP visibility before toggle:', isPipVisible);
         isPipVisible = !isPipVisible;
         console.log('New PiP visibility after toggle:', isPipVisible);

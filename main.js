@@ -1367,7 +1367,7 @@ function setupIpcHandlers() {
   
   // Relay panel-toggle-pip from panel to renderer
   ipcMain.on('panel-toggle-pip', () => {
-    console.log('Received panel-toggle-pip message, forwarding to main window');
+    console.log('Received panel-toggle-pip message from panel');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('toggle-pip');
     } else {
