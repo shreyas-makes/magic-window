@@ -407,7 +407,7 @@ async function concatenateSegments(tempDir, outputPath) {
       
       for (const segment of segments) {
         // Escape single quotes in paths for ffmpeg
-        const escapedPath = segment.replace(/'/g, '\\\'');
+        const escapedPath = segment.path.replace(/'/g, '\\\'');
         listContent += `file '${escapedPath}'\n`;
       }
       

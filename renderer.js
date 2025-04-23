@@ -48,6 +48,10 @@ let secondsElapsed = 0;
 const zoomPresets = [1.0, 1.5, 2.0, 4.0];
 let currentPresetIndex = 0;
 
+// Zoom constraints
+const MIN_ZOOM = 0.5;  // Minimum allowed zoom level
+const MAX_ZOOM = 10.0; // Maximum allowed zoom level
+
 // Add PiP state and snapshot throttling variables
 let isPipVisible = false;
 let lastPipUpdateTime = 0;
