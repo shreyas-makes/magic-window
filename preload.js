@@ -32,7 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'video-size-update',
       'zoom-state-update',
       'recordingMimeType',
-      'renderer-error' // New channel for renderer error reporting
+      'renderer-error', // New channel for renderer error reporting
+      'set-codec' // Channel for codec selection
     ];
     if (validChannels.includes(channel)) {
       try {

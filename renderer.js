@@ -1897,6 +1897,10 @@ function stopCanvasRecording() {
     console.log('Stopping canvas recording');
     mediaRecorder.stop();
     
+    // Notify main process that recording is stopping
+    window.electronAPI.stopRecording();
+    console.log('Sent stop recording notification to main process');
+    
     return true;
   } catch (error) {
     console.error('Error stopping canvas recording:', error);
@@ -3793,13 +3797,21 @@ function initializeCodecSelection() {
   document.getElementById('codec-select').addEventListener('change', (e) => {
     const selectedCodec = e.target.value;
     // Send to main process
-    window.api.send('set-codec', selectedCodec);
-    console.log(`Codec set to: ${selectedCodec}`);
+    if (window.electronAPI && window.electronAPI.send) {
+      window.electronAPI.send('set-codec', selectedCodec);
+      console.log(`Codec set to: ${selectedCodec}`);
+    } else {
+      console.warn('electronAPI.send not available for set-codec');
+    }
   });
   
   // Send initial codec preference
   const initialCodec = document.getElementById('codec-select').value;
-  window.api.send('set-codec', initialCodec);
+  if (window.electronAPI && window.electronAPI.send) {
+    window.electronAPI.send('set-codec', initialCodec);
+  } else {
+    console.warn('electronAPI.send not available for set-codec initial value');
+  }
 }
 
 // Global error handler
@@ -3896,3 +3908,47 @@ function createMediaRecorder(stream, options) {
   try {
     const recorder = new MediaRecorder(stream, options);
     
+    // Set up error handler
+    recorder.onerror = (event) => {
+      console.error('MediaRecorder error:', event.error);
+      
+      // Report to main process
+      if (window.electronAPI && window.electronAPI.reportError) {
+        window.electronAPI.reportError({
+          message: event.error ? event.error.message : 'Unknown MediaRecorder error',
+          stack: 'MediaRecorder.onerror',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      // Show error to user
+      showErrorMessage(event.error ? event.error.message : 'Recording error occurred');
+      
+      // Stop recording if it's still active
+      if (recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch (stopError) {
+          console.error('Error stopping recorder after error:', stopError);
+        }
+      }
+    };
+    
+    return recorder;
+  } catch (error) {
+    console.error('Error creating MediaRecorder:', error);
+    
+    // Report to main process
+    if (window.electronAPI && window.electronAPI.reportError) {
+      window.electronAPI.reportError({
+        message: error.message || 'Failed to create MediaRecorder',
+        stack: error.stack || '',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Show error to user
+    showErrorMessage(error.message || 'Failed to create recorder');
+    throw error;
+  }
+}

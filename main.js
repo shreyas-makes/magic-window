@@ -1178,8 +1178,86 @@ function setupIpcHandlers() {
       // Could log to file here
     });
     
-    // Additional IPC handlers from existing code...
-    // ... existing IPC handlers
+    // Handle panel commands
+    ipcMain.on('panel-toggle-pip', (event) => {
+      try {
+        console.log('Panel requested PiP toggle');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('toggle-pip');
+        }
+      } catch (error) {
+        logError('Panel Toggle PiP', error);
+      }
+    });
+    
+    ipcMain.on('panel-zoom-in', (event) => {
+      try {
+        console.log('Panel requested zoom in');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('zoom-in');
+        }
+      } catch (error) {
+        logError('Panel Zoom In', error);
+      }
+    });
+    
+    ipcMain.on('panel-zoom-out', (event) => {
+      try {
+        console.log('Panel requested zoom out');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('zoom-out');
+        }
+      } catch (error) {
+        logError('Panel Zoom Out', error);
+      }
+    });
+    
+    ipcMain.on('panel-set-zoom-center', (event, coords) => {
+      try {
+        console.log(`Panel requested set zoom center: (${coords.x}, ${coords.y})`);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('set-zoom-center', coords);
+        }
+      } catch (error) {
+        logError('Panel Set Zoom Center', error);
+      }
+    });
+    
+    // Handle PiP state update
+    ipcMain.on('pip-state-update', (event, isActive) => {
+      try {
+        console.log('PiP state update received:', isActive);
+        
+        // If there's a floating panel, relay the state to it
+        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+          floatingPanelWindow.webContents.send('update-pip-state', isActive);
+        }
+      } catch (error) {
+        logError('PiP State Update', error);
+      }
+    });
+    
+    // Handle PiP frame update
+    ipcMain.on('pip-frame-update', (event, dataURL) => {
+      try {
+        // If there's a floating panel, relay the frame to it
+        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+          floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+        }
+      } catch (error) {
+        logError('PiP Frame Update', error);
+      }
+    });
+    
+    // Handle set-codec request
+    ipcMain.on('set-codec', (event, codec) => {
+      try {
+        console.log('Codec preference set to:', codec);
+        store.set('preferredCodec', codec);
+      } catch (error) {
+        logError('Set Codec', error);
+      }
+    });
   } catch (error) {
     logError('Setup IPC Handlers', error);
   }
