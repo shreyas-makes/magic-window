@@ -1,0 +1,20 @@
+---
+description: **/renderer.js
+globs: 
+alwaysApply: false
+---
+{
+  "description": "Use consistent coordinate systems for rendering transformations with proper signs",
+  "when": "**/renderer.js, any file using PIXI.js or Canvas 2D rendering with custom zoom/pan",
+  "rule": "When calculating rendering offsets or translations, always validate the coordinate system: 1) Draw a diagram of the coordinate directions, 2) Verify sign conventions (+/- for x/y offsets), 3) For PIXI.js sprite positioning with normalized coordinates, use positive values in the Y direction to move up in screen space",
+  "examples": [
+    {
+      "before": "videoSprite.position.y = canvasHeight / 2 - (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1));",
+      "after": "videoSprite.position.y = canvasHeight / 2 + (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1));"
+    }
+  ],
+  "validation": "Verify by testing navigation buttons (e.g., 'Move to Top-Right') and confirming the view moves to the expected quadrant. Check console logs for position values to match intended coordinates.",
+  "tags": ["rendering", "bugfix", "pixi-js", "canvas-2d", "zoom-and-pan"],
+  "rule_type": "Agent requested",
+  "description_for_agent": "When implementing or modifying code related to rendering transformations, coordinate systems, or pan/zoom features, use this rule to ensure proper direction handling and consistent sign conventions across the codebase."
+}
