@@ -79,69 +79,69 @@ Phase 3/4: Zoom Engine & Rendering
 [x] In Pixi update loop (app.ticker), apply videoSprite.scale, videoSprite.pivot, videoSprite.position based on state variables
 [x] Add temporary buttons/keys in renderer to test changing zoom state
 [x] Verify recorded output reflects the zoom seen on canvas
-[ ] Step 9: Smooth Transitions & Advanced Filtering
-[ ] Install gsap
-[ ] Refactor state: use currentZoom/Center and targetZoom/Center
-[ ] Create setZoom(level, x, y, duration) function using gsap.to() to animate current* variables
-[ ] Update Pixi transforms in ticker based on animated current* values
-[ ] Modify controls to call setZoom()
-[ ] Confirm LINEAR filtering is used (defer Lanczos)
-[ ] (Optional) Install @pixi/filter-fxaa, implement toggleable FXAA filter (sprite.filters)
-[ ] Implement FPS calculation in ticker (app.ticker.FPS)
-[ ] Log console warnings if FPS drops below threshold (~59 FPS)
+[x] Step 9: Smooth Transitions & Advanced Filtering
+[x] Install gsap
+[x] Refactor state: use currentZoom/Center and targetZoom/Center
+[x] Create setZoom(level, x, y, duration) function using gsap.to() to animate current* variables
+[x] Update Pixi transforms in ticker based on animated current* values
+[x] Modify controls to call setZoom()
+[x] Confirm LINEAR filtering is used (defer Lanczos)
+[x] (Optional) Install @pixi/filter-fxaa, implement toggleable FXAA filter (sprite.filters)
+[x] Implement FPS calculation in ticker (app.ticker.FPS)
+[x] Log console warnings if FPS drops below threshold (~59 FPS)
 
 
 Phase 5: Zoom UI & Interaction
-[ ] Step 10: Floating Control Panel UI & Basic Wiring
-[ ] Create new BrowserWindow in main for panel (borderless, always-on-top)
-[ ] Create panel.html, preloadPanel.js, panelRenderer.js
-[ ] Add panel HTML elements: zoom display span, zoom buttons, PiP toggle, collapse button
-[ ] Set up contextBridge in preloadPanel.js for panel's IPC needs
-[ ] Implement IPC relays in main.js (Panel <-> Main <-> Renderer)
-[ ] Show/Hide panel window based on main recording state
-[ ] Wire panel zoom buttons to send IPC commands relayed to main renderer
-[ ] Send zoom level updates from main renderer (via main) to panel for display
-[ ] Step 11: Zoom Controls - Shortcuts, Presets, Mouse Wheel
-[ ] Register globalShortcut for Cmd+Plus / Cmd+Minus in main.js
-[ ] Send 'zoomIn' / 'zoomOut' IPC directly to main renderer from shortcuts
-[ ] Define zoom presets array in renderer.js ([1.0, 1.5, 2.0, 4.0])
-[ ] Modify 'zoomIn'/'zoomOut' logic in renderer to step through presets using setZoom()
-[ ] Add wheel event listener to main canvas in renderer.js
-[ ] Check for modifier key (event.metaKey) in wheel event
-[ ] If modifier pressed, call preset zoom logic based on event.deltaY
-[ ] (Optional) Calculate zoom center based on cursor position for scroll zoom
-[ ] Step 12: PiP Navigator Implementation
-[ ] Add PiP container div and <canvas id="pip-canvas"> to panel.html
-[ ] Set up second PIXI.Application for PiP canvas in panelRenderer.js
-[ ] Implement throttled snapshot sending (downscaled original frame data URL) from main renderer via IPC ('pipFrameUpdate')
-[ ] Relay snapshot data URL to panel via main process
-[ ] Display received snapshot image in PiP canvas sprite (PIXI.Texture.fromURL)
-[ ] Send current zoom state (level, center, canvasSize) from main renderer via IPC ('zoomStateUpdate')
-[ ] Relay zoom state to panel via main process
-[ ] Draw zoom rectangle (PIXI.Graphics) on PiP canvas based on received state
-[ ] Add mouse listeners (mousedown, mousemove, mouseup) to PiP canvas
-[ ] On PiP drag, calculate corresponding 4K center coordinates and send 'setZoomCenter' command via IPC
-[ ] Implement 'setZoomCenter' listener in main renderer to call setZoom()
-[ ] Implement PiP toggle button logic in panel
-[ ] Register Cmd+0 shortcut in main to trigger PiP toggle IPC
-[ ] Implement PiP visibility state and show/hide logic in panel/renderer
-[ ] Step 13: "Magic Window" Border Effect
-[ ] Create PIXI.Graphics object on main Pixi stage (renderer.js)
-[ ] In ticker, clear graphics and draw rectangle matching zoom viewport bounds
-[ ] Use lineStyle with a distinct color (e.g., purple) and thickness
-[ ] Animate line alpha (0.5 + Math.sin(Date.now()*rate)*0.5) for pulsing effect
-[ ] Create PIXI.Graphics object on PiP Pixi stage (panelRenderer.js)
-[ ] Draw pulsing border around the zoom rectangle on PiP canvas
+[x] Step 10: Floating Control Panel UI & Basic Wiring
+[x] Create new BrowserWindow in main for panel (borderless, always-on-top)
+[x] Create panel.html, preloadPanel.js, panelRenderer.js
+[x] Add panel HTML elements: zoom display span, zoom buttons, PiP toggle, collapse button
+[x] Set up contextBridge in preloadPanel.js for panel's IPC needs
+[x] Implement IPC relays in main.js (Panel <-> Main <-> Renderer)
+[x] Show/Hide panel window based on main recording state
+[x] Wire panel zoom buttons to send IPC commands relayed to main renderer
+[x] Send zoom level updates from main renderer (via main) to panel for display
+[x] Step 11: Zoom Controls - Shortcuts, Presets, Mouse Wheel
+[x] Register globalShortcut for Cmd+Plus / Cmd+Minus in main.js
+[x] Send 'zoomIn' / 'zoomOut' IPC directly to main renderer from shortcuts
+[x] Define zoom presets array in renderer.js ([1.0, 1.5, 2.0, 4.0])
+[x] Modify 'zoomIn'/'zoomOut' logic in renderer to step through presets using setZoom()
+[x] Add wheel event listener to main canvas in renderer.js
+[x] Check for modifier key (event.metaKey) in wheel event
+[x] If modifier pressed, call preset zoom logic based on event.deltaY
+[x] (Optional) Calculate zoom center based on cursor position for scroll zoom
+[x] Step 12: PiP Navigator Implementation
+[x] Add PiP container div and <canvas id="pip-canvas"> to panel.html
+[x] Set up second PIXI.Application for PiP canvas in panelRenderer.js
+[x] Implement throttled snapshot sending (downscaled original frame data URL) from main renderer via IPC ('pipFrameUpdate')
+[x] Relay snapshot data URL to panel via main process
+[x] Display received snapshot image in PiP canvas sprite (PIXI.Texture.fromURL)
+[x] Send current zoom state (level, center, canvasSize) from main renderer via IPC ('zoomStateUpdate')
+[x] Relay zoom state to panel via main process
+[x] Draw zoom rectangle (PIXI.Graphics) on PiP canvas based on received state
+[x] Add mouse listeners (mousedown, mousemove, mouseup) to PiP canvas
+[x] On PiP drag, calculate corresponding 4K center coordinates and send 'setZoomCenter' command via IPC
+[x] Implement 'setZoomCenter' listener in main renderer to call setZoom()
+[x] Implement PiP toggle button logic in panel
+[x] Register Cmd+0 shortcut in main to trigger PiP toggle IPC
+[x] Implement PiP visibility state and show/hide logic in panel/renderer
+[x] Step 13: "Magic Window" Border Effect
+[x] Create PIXI.Graphics object on main Pixi stage (renderer.js)
+[x] In ticker, clear graphics and draw rectangle matching zoom viewport bounds
+[x] Use lineStyle with a distinct color (e.g., purple) and thickness
+[x] Animate line alpha (0.5 + Math.sin(Date.now()*rate)*0.5) for pulsing effect
+[x] Create PIXI.Graphics object on PiP Pixi stage (panelRenderer.js)
+[x] Draw pulsing border around the zoom rectangle on PiP canvas
 
 
 Phase 6: Integration, Polishing & Deployment
 [x] Step 14: HEVC, Performance Tuning & Pause/Resume
-[ ] Check MediaRecorder.isTypeSupported for HEVC (hvc1) in renderer
+[x] Check MediaRecorder.isTypeSupported for HEVC (hvc1) in renderer
 [x] Configure MediaRecorder mimeType for HEVC if supported (fallback to H.264)
 [x] Set appropriate videoBitsPerSecond for 4K/60FPS HEVC (~20-40 Mbps)
-[ ] Profile CPU/GPU/RAM/FPS during recording (baseline & zoom) using DevTools/Activity Monitor
-[ ] Optimize Pixi rendering, IPC frequency, snapshot generation as needed
-[ ] Test for dropped frames over long recording (aim for <= 0.5%)
+[x] Profile CPU/GPU/RAM/FPS during recording (baseline & zoom) using DevTools/Activity Monitor
+[x] Optimize Pixi rendering, IPC frequency, snapshot generation as needed
+[x] Test for dropped frames over long recording (aim for <= 0.5%)
 [x] Implement mediaRecorder.pause() in renderer triggered by IPC
 [x] Implement mediaRecorder.resume() in renderer triggered by IPC
 [x] Update renderer state (isPaused) and timer logic for pause/resume

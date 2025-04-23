@@ -59,6 +59,193 @@ const MAX_FRAME_HISTORY = 120; // 2 seconds at 60fps
 let lastPerformanceLog = 0;
 const PERFORMANCE_LOG_INTERVAL = 10000; // Log every 10 seconds
 
+// Enhanced performance monitoring system
+const performanceMetrics = {
+  frameCount: 0,
+  lastFrameTime: 0,
+  frameTimes: [],
+  fpsHistory: [],
+  droppedFrames: 0,
+  expectedFrameInterval: 1000 / 60, // ~16.67ms for 60fps
+  heapSizeHistory: [],
+  startTime: 0,
+  isRecording: false,
+  zoomOperations: 0,
+  lastFpsUpdate: 0,
+  fpsUpdateInterval: 500, // Update FPS display every 500ms
+};
+
+// Track frame times and calculate metrics
+function trackFrameTime(operation = 'render') {
+  const now = performance.now();
+  
+  // Initialize timing on first call
+  if (performanceMetrics.startTime === 0) {
+    performanceMetrics.startTime = now;
+    performanceMetrics.lastFrameTime = now;
+    return;
+  }
+  
+  // Calculate time since last frame
+  const frameTime = now - performanceMetrics.lastFrameTime;
+  performanceMetrics.lastFrameTime = now;
+  
+  // Track for moving average (keep last 60 frames)
+  performanceMetrics.frameTimes.push(frameTime);
+  if (performanceMetrics.frameTimes.length > 60) {
+    performanceMetrics.frameTimes.shift();
+  }
+  
+  // Detect dropped frames (if frame time > 150% of expected time)
+  if (frameTime > performanceMetrics.expectedFrameInterval * 1.5) {
+    const estimatedDroppedFrames = Math.floor(frameTime / performanceMetrics.expectedFrameInterval) - 1;
+    performanceMetrics.droppedFrames += estimatedDroppedFrames;
+    
+    // Log significant frame drops during recording
+    if (performanceMetrics.isRecording && estimatedDroppedFrames > 2) {
+      console.warn(`Potential ${estimatedDroppedFrames} dropped frames detected: ${frameTime.toFixed(1)}ms frame time`);
+    }
+  }
+  
+  // Count frames
+  performanceMetrics.frameCount++;
+  
+  // Update FPS calculation periodically
+  if (now - performanceMetrics.lastFpsUpdate > performanceMetrics.fpsUpdateInterval) {
+    const secondsElapsed = (now - performanceMetrics.lastFpsUpdate) / 1000;
+    const fps = performanceMetrics.frameCount / secondsElapsed;
+    
+    // Reset frame count
+    performanceMetrics.frameCount = 0;
+    performanceMetrics.lastFpsUpdate = now;
+    
+    // Update FPS history
+    performanceMetrics.fpsHistory.push(fps);
+    if (performanceMetrics.fpsHistory.length > 20) {
+      performanceMetrics.fpsHistory.shift();
+    }
+    
+    // Update UI if available
+    updatePerformanceUI();
+  }
+  
+  // Track memory usage every second
+  if (now % 1000 < 20) {
+    if (window.performance && window.performance.memory) {
+      const heapSize = window.performance.memory.usedJSHeapSize;
+      performanceMetrics.heapSizeHistory.push(heapSize);
+      
+      // Keep last 30 seconds of data
+      if (performanceMetrics.heapSizeHistory.length > 30) {
+        performanceMetrics.heapSizeHistory.shift();
+      }
+    }
+  }
+  
+  // Track zoom operations
+  if (operation.includes('zoom') || operation.includes('pan')) {
+    performanceMetrics.zoomOperations++;
+  }
+}
+
+// Function to calculate current performance metrics
+function getPerformanceStats() {
+  const avgFrameTime = performanceMetrics.frameTimes.length > 0 
+    ? performanceMetrics.frameTimes.reduce((a, b) => a + b, 0) / performanceMetrics.frameTimes.length 
+    : 0;
+  
+  const avgFps = performanceMetrics.fpsHistory.length > 0
+    ? performanceMetrics.fpsHistory.reduce((a, b) => a + b, 0) / performanceMetrics.fpsHistory.length
+    : 0;
+  
+  const totalFrames = performanceMetrics.frameTimes.length + performanceMetrics.droppedFrames;
+  const dropRate = totalFrames > 0 ? (performanceMetrics.droppedFrames / totalFrames) * 100 : 0;
+  
+  // Calculate memory growth if we have enough data
+  let memoryGrowth = 0;
+  if (performanceMetrics.heapSizeHistory.length > 10) {
+    const initial = performanceMetrics.heapSizeHistory[0];
+    const current = performanceMetrics.heapSizeHistory[performanceMetrics.heapSizeHistory.length - 1];
+    memoryGrowth = current - initial;
+  }
+  
+  return {
+    avgFrameTime: avgFrameTime.toFixed(2),
+    avgFps: avgFps.toFixed(1),
+    droppedFrames: performanceMetrics.droppedFrames,
+    dropRate: dropRate.toFixed(2),
+    heapSize: window.performance && window.performance.memory ? 
+      formatBytes(window.performance.memory.usedJSHeapSize) : 'N/A',
+    memoryGrowth: formatBytes(memoryGrowth),
+    elapsedTime: ((performance.now() - performanceMetrics.startTime) / 1000).toFixed(0),
+    zoomOperations: performanceMetrics.zoomOperations
+  };
+}
+
+// Update performance metrics display
+function updatePerformanceUI() {
+  const stats = getPerformanceStats();
+  const perfPanel = document.getElementById('performance-metrics');
+  
+  if (!perfPanel) return;
+  
+  // Format metrics for display
+  perfPanel.innerHTML = `
+    <div class="metric ${parseFloat(stats.avgFps) < 55 ? 'warning' : ''}">FPS: ${stats.avgFps}</div>
+    <div class="metric ${parseFloat(stats.avgFrameTime) > 20 ? 'warning' : ''}">Frame: ${stats.avgFrameTime}ms</div>
+    <div class="metric ${parseFloat(stats.dropRate) > 0.5 ? 'warning' : ''}">Drops: ${stats.droppedFrames} (${stats.dropRate}%)</div>
+    <div class="metric">Mem: ${stats.heapSize}</div>
+  `;
+}
+
+// Start performance monitoring
+function startPerformanceMonitoring(isRecording = false) {
+  // Reset metrics
+  performanceMetrics.frameCount = 0;
+  performanceMetrics.lastFrameTime = performance.now();
+  performanceMetrics.frameTimes = [];
+  performanceMetrics.droppedFrames = 0;
+  performanceMetrics.startTime = performance.now();
+  performanceMetrics.isRecording = isRecording;
+  performanceMetrics.lastFpsUpdate = performance.now();
+  
+  // Create performance UI if it doesn't exist
+  if (!document.getElementById('performance-metrics')) {
+    const perfPanel = document.createElement('div');
+    perfPanel.id = 'performance-metrics';
+    perfPanel.className = 'performance-panel';
+    document.body.appendChild(perfPanel);
+    
+    // Add styles if not already present
+    if (!document.getElementById('performance-metrics-style')) {
+      const style = document.createElement('style');
+      style.id = 'performance-metrics-style';
+      style.textContent = `
+        .performance-panel {
+          position: fixed;
+          bottom: 10px;
+          left: 10px;
+          background: rgba(0, 0, 0, 0.7);
+          color: white;
+          padding: 8px;
+          border-radius: 4px;
+          font-family: monospace;
+          font-size: 12px;
+          z-index: 9999;
+          display: flex;
+          gap: 10px;
+        }
+        .metric.warning {
+          color: #ff9800;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }
+  
+  console.log(`Performance monitoring ${isRecording ? 'during recording ' : ''}started`);
+}
+
 // Function to format seconds as HH:MM:SS
 function formatTime(seconds) {
   const hours = Math.floor(seconds / 3600);
@@ -108,15 +295,13 @@ function resetTimer() {
 
 // Function to format bytes to human-readable form
 function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0 || bytes === 'N/A') return 'N/A';
   
   const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
   
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
 }
 
 // Function to update disk space UI
@@ -1233,13 +1418,41 @@ async function setupPixiRendering() {
     // Wait for source-video to have proper dimensions
     await waitForVideoMetadata(sourceVideo);
     
+    const sourceWidth = sourceVideo.videoWidth;
+    const sourceHeight = sourceVideo.videoHeight;
+    const canvasWidth = app.screen.width;
+    const canvasHeight = app.screen.height;
+    
+    console.log("Creating video texture with dimensions:", sourceWidth, "x", sourceHeight);
+    console.log("Canvas dimensions:", canvasWidth, "x", canvasHeight);
+    
+    // Calculate aspect ratios
+    const sourceAspect = sourceWidth / sourceHeight;
+    const canvasAspect = canvasWidth / canvasHeight;
+    
+    // Determine initial scale factor based on aspect ratios
+    let initialScale;
+    if (sourceAspect > canvasAspect) {
+      // Source is wider - scale by width
+      initialScale = canvasWidth / sourceWidth;
+      console.log("Source is wider than canvas, scaling by width. Scale factor:", initialScale);
+    } else {
+      // Source is taller - scale by height
+      initialScale = canvasHeight / sourceHeight;
+      console.log("Source is taller than canvas, scaling by height. Scale factor:", initialScale);
+    }
+    
     // Initialize video sprite from source-video
     const videoTexture = PIXI.Texture.from(sourceVideo);
     videoSprite = new PIXI.Sprite(videoTexture);
     
     // Set initial sprite position and pivot point
     videoSprite.position.set(app.screen.width / 2, app.screen.height / 2);
-    videoSprite.pivot.set(sourceVideo.videoWidth / 2, sourceVideo.videoHeight / 2);
+    videoSprite.anchor.set(0.5); // Center the sprite's anchor point
+    
+    // Set initial state with calculated scale
+    state.baseScale = initialScale;
+    state.currentZoom = state.targetZoom = initialScale;
     videoSprite.scale.set(state.currentZoom);
     
     // Add video sprite to the stage
@@ -1285,12 +1498,9 @@ async function setupPixiRendering() {
         
         // Only update the texture if the video is playing and has valid data
         if (sourceVideo && sourceVideo.readyState >= 2) {
-          // Update the texture from the video element
+          // Update the texture from the video element - critical for seeing video content!
           if (videoSprite && videoSprite.texture && videoSprite.texture.baseTexture) {
-            // During recording, only update texture every other frame to reduce CPU load
-            if (!isRecording || now % 2 === 0) {
-              videoSprite.texture.baseTexture.update();
-            }
+            videoSprite.texture.baseTexture.update();
           }
         }
         
@@ -1304,9 +1514,11 @@ async function setupPixiRendering() {
         // Apply updated position and scale
         videoSprite.scale.set(state.currentZoom);
         
-        // Calculate position based on zoom center
-        videoSprite.position.x = app.screen.width / 2 - (state.currentCenterX - (sourceVideo.videoWidth / 2)) * state.currentZoom;
-        videoSprite.position.y = app.screen.height / 2 - (state.currentCenterY - (sourceVideo.videoHeight / 2)) * state.currentZoom;
+        // Calculate position based on zoom center - improved positioning logic
+        const centerOffsetX = (state.currentCenterX - sourceWidth / 2);
+        const centerOffsetY = (state.currentCenterY - sourceHeight / 2);
+        videoSprite.position.x = app.screen.width / 2 - centerOffsetX * state.currentZoom;
+        videoSprite.position.y = app.screen.height / 2 - centerOffsetY * state.currentZoom;
         
         // Draw the border effect - throttle during recording to improve performance
         if (!isRecording || now % 3 === 0) {
@@ -3174,4 +3386,418 @@ function initializeUI() {
       togglePip();
     });
   }
+}
+
+// Function to handle zoom controls (both UI and keyboard/mouse)
+function handleZoom(direction, intensity = 1, mouseX = null, mouseY = null) {
+  if (!videoSprite || !sourceVideo || sourceVideo.readyState < 2) {
+    console.warn('Cannot zoom: Video not ready');
+    return;
+  }
+  
+  const sourceWidth = sourceVideo.videoWidth;
+  const sourceHeight = sourceVideo.videoHeight;
+  
+  // Get current scale
+  const currentScale = state.targetZoom;
+  
+  // Calculate new zoom level based on direction and intensity
+  let newScale = currentScale;
+  if (direction === 'in') {
+    newScale *= (1 + 0.15 * intensity);
+  } else if (direction === 'out') {
+    newScale /= (1 + 0.15 * intensity);
+  } else if (direction === 'reset') {
+    // Reset to original calculated scale based on aspect ratio
+    newScale = state.baseScale;
+  }
+  
+  // Enforce min/max zoom constraints
+  newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newScale));
+  
+  // Update zoom UI indicator
+  updateZoomPercentage(newScale);
+  
+  // Determine zoom center (where we're zooming into or out from)
+  let zoomCenterX, zoomCenterY;
+  
+  if (mouseX !== null && mouseY !== null) {
+    // Convert mouse coordinates to video coordinates
+    const canvasRect = app.view.getBoundingClientRect();
+    const mouseCanvasX = mouseX - canvasRect.left;
+    const mouseCanvasY = mouseY - canvasRect.top;
+    
+    // Convert canvas coordinates to video texture coordinates
+    const videoXRatio = (mouseCanvasX - (app.screen.width / 2 - videoSprite.width / 2)) / videoSprite.width;
+    const videoYRatio = (mouseCanvasY - (app.screen.height / 2 - videoSprite.height / 2)) / videoSprite.height;
+    
+    // Calculate the actual coordinates in the video
+    zoomCenterX = videoXRatio * sourceWidth;
+    zoomCenterY = videoYRatio * sourceHeight;
+  } else {
+    // Use current center if no mouse coordinates provided
+    zoomCenterX = state.targetCenterX;
+    zoomCenterY = state.targetCenterY;
+  }
+  
+  // Ensure the zoom center stays within the video bounds
+  zoomCenterX = Math.max(0, Math.min(sourceWidth, zoomCenterX));
+  zoomCenterY = Math.max(0, Math.min(sourceHeight, zoomCenterY));
+  
+  // Update target state for smooth transition
+  state.targetZoom = newScale;
+  state.targetCenterX = zoomCenterX;
+  state.targetCenterY = zoomCenterY;
+  
+  console.log(`Zoom: ${newScale.toFixed(2)}x, Center: (${zoomCenterX.toFixed(0)}, ${zoomCenterY.toFixed(0)})`);
+}
+
+// Function to handle camera panning
+function handlePan(deltaX, deltaY) {
+  if (!videoSprite || !sourceVideo) return;
+  
+  const sourceWidth = sourceVideo.videoWidth;
+  const sourceHeight = sourceVideo.videoHeight;
+  
+  // Convert delta in screen pixels to delta in video coordinates based on current zoom
+  const videoFrameDeltaX = deltaX / state.currentZoom;
+  const videoFrameDeltaY = deltaY / state.currentZoom;
+  
+  // Calculate new center position
+  let newCenterX = state.targetCenterX - videoFrameDeltaX;
+  let newCenterY = state.targetCenterY - videoFrameDeltaY;
+  
+  // Calculate bounds for panning to keep video visible at current zoom level
+  const currentScaledWidth = sourceWidth * state.currentZoom;
+  const currentScaledHeight = sourceHeight * state.currentZoom;
+  
+  // Calculate the maximum distance we can move the center point
+  // This ensures a portion of the video always stays visible
+  const maxOffsetX = Math.max(0, (currentScaledWidth - app.screen.width) / (2 * state.currentZoom));
+  const maxOffsetY = Math.max(0, (currentScaledHeight - app.screen.height) / (2 * state.currentZoom));
+  
+  // Center of video
+  const videoCenterX = sourceWidth / 2;
+  const videoCenterY = sourceHeight / 2;
+  
+  // Limit the bounds of panning to keep video partially visible
+  newCenterX = Math.max(videoCenterX - maxOffsetX, Math.min(videoCenterX + maxOffsetX, newCenterX));
+  newCenterY = Math.max(videoCenterY - maxOffsetY, Math.min(videoCenterY + maxOffsetY, newCenterY));
+  
+  // Update target state for smooth transition
+  state.targetCenterX = newCenterX;
+  state.targetCenterY = newCenterY;
+}
+
+// Animation/rendering loop
+function animate() {
+  // Track frame performance
+  trackFrameTime('render');
+  
+  // Existing animation code
+  requestAnimationFrame(animate);
+  
+  if (videoSprite && sourceVideo && sourceVideo.readyState >= 2) {
+    const sourceWidth = sourceVideo.videoWidth;
+    const sourceHeight = sourceVideo.videoHeight;
+    const canvasWidth = app.screen.width;
+    const canvasHeight = app.screen.height;
+    
+    // Smoothly interpolate currentZoom towards targetZoom
+    if (Math.abs(state.currentZoom - state.targetZoom) > 0.001) {
+      state.currentZoom += (state.targetZoom - state.currentZoom) * 0.1;
+    } else {
+      state.currentZoom = state.targetZoom;
+    }
+    
+    // Smoothly interpolate currentCenter towards targetCenter
+    if (Math.abs(state.currentCenterX - state.targetCenterX) > 0.05 ||
+        Math.abs(state.currentCenterY - state.targetCenterY) > 0.05) {
+      state.currentCenterX += (state.targetCenterX - state.currentCenterX) * 0.1;
+      state.currentCenterY += (state.targetCenterY - state.currentCenterY) * 0.1;
+    } else {
+      state.currentCenterX = state.targetCenterX;
+      state.currentCenterY = state.targetCenterY;
+    }
+    
+    // Get the center point of the video
+    const videoCenterX = sourceWidth / 2;
+    const videoCenterY = sourceHeight / 2;
+    
+    // Calculate offset from center (how much we've panned)
+    const offsetX = state.currentCenterX - videoCenterX;
+    const offsetY = state.currentCenterY - videoCenterY;
+    
+    // Calculate the scale based on current zoom level and base scale
+    const scaleFactor = state.currentZoom;
+    
+    // Calculate the width and height of the video sprite at the current scale
+    const scaledWidth = sourceWidth * scaleFactor;
+    const scaledHeight = sourceHeight * scaleFactor;
+    
+    // Update sprite scale
+    videoSprite.scale.x = scaleFactor;
+    videoSprite.scale.y = scaleFactor;
+    
+    // Update sprite position to center in canvas with offset applied
+    videoSprite.x = canvasWidth / 2 - (offsetX * scaleFactor);
+    videoSprite.y = canvasHeight / 2 - (offsetY * scaleFactor);
+    
+    // Force PIXI to update the texture from the video source
+    if (videoTexture) {
+      videoTexture.update();
+    }
+  }
+  
+  // Render the scene
+  app.renderer.render(app.stage);
+}
+
+// Function to initialize mouse and keyboard controls for zooming and panning
+function initializeZoomPanControls() {
+  const canvas = document.getElementById('main-canvas');
+  let isDragging = false;
+  let lastX = 0;
+  let lastY = 0;
+  let panningEnabled = true;
+  
+  // Mouse wheel zoom
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    
+    // Check if the video is loaded and ready
+    if (!videoSprite || !sourceVideo || sourceVideo.readyState < 2) return;
+    
+    // Determine zoom direction based on wheel delta
+    const direction = e.deltaY < 0 ? 'in' : 'out';
+    
+    // Calculate intensity based on wheel delta
+    const intensity = Math.min(1.5, Math.abs(e.deltaY) / 100);
+    
+    // Call zoom function with mouse position for center point
+    handleZoom(direction, intensity, e.clientX, e.clientY);
+    
+    // Track performance metrics when zooming
+    trackFrameTime('wheel_zoom');
+  }, { passive: false });
+  
+  // Mouse down for panning
+  canvas.addEventListener('mousedown', (e) => {
+    if (!panningEnabled || !videoSprite) return;
+    
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+  });
+  
+  // Mouse move for panning
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging || !panningEnabled || !videoSprite) return;
+    
+    const deltaX = e.clientX - lastX;
+    const deltaY = e.clientY - lastY;
+    
+    // Only pan if there's significant movement (reduces jitter)
+    if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+      handlePan(deltaX, deltaY);
+      trackFrameTime('mouse_pan');
+    }
+    
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  
+  // Mouse up to stop panning
+  window.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      canvas.style.cursor = 'default';
+    }
+  });
+  
+  // Mouse leave to stop panning
+  canvas.addEventListener('mouseleave', () => {
+    if (isDragging) {
+      isDragging = false;
+      canvas.style.cursor = 'default';
+    }
+  });
+  
+  // Keyboard zoom controls
+  window.addEventListener('keydown', (e) => {
+    // Skip if inside an input field
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    
+    // Cmd/Ctrl + Plus = Zoom In
+    if (e.key === '=' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleZoom('in', 1);
+      trackFrameTime('keyboard_zoom_in');
+    }
+    // Cmd/Ctrl + Minus = Zoom Out
+    else if (e.key === '-' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleZoom('out', 1);
+      trackFrameTime('keyboard_zoom_out');
+    }
+    // Cmd/Ctrl + 0 = Reset Zoom
+    else if (e.key === '0' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleZoom('reset');
+      trackFrameTime('keyboard_zoom_reset');
+    }
+    // Arrow keys for panning when zoomed in
+    else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      if (state.currentZoom > state.baseScale * 1.05) {
+        e.preventDefault();
+        const panSpeed = 10;
+        const deltaX = e.key === 'ArrowLeft' ? panSpeed : (e.key === 'ArrowRight' ? -panSpeed : 0);
+        const deltaY = e.key === 'ArrowUp' ? panSpeed : (e.key === 'ArrowDown' ? -panSpeed : 0);
+        handlePan(deltaX, deltaY);
+        trackFrameTime('keyboard_pan');
+      }
+    }
+  });
+  
+  // Toggle panning with 'p' key
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'p' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      panningEnabled = !panningEnabled;
+      canvas.style.cursor = panningEnabled ? 'default' : 'not-allowed';
+      console.log(`Panning ${panningEnabled ? 'enabled' : 'disabled'}`);
+    }
+  });
+  
+  // Double-click to reset zoom and position
+  canvas.addEventListener('dblclick', () => {
+    handleZoom('reset');
+    trackFrameTime('dblclick_reset');
+  });
+  
+  console.log('Zoom and pan controls initialized');
+}
+
+// Function to update the zoom percentage display in the UI
+function updateZoomPercentage(scale) {
+  const percentElement = document.getElementById('zoom-percentage');
+  if (percentElement) {
+    const percent = Math.round(scale * 100);
+    percentElement.textContent = `${percent}%`;
+  }
+}
+
+// Function to start recording
+function startRecording() {
+  if (recording) return;
+  recording = true;
+  
+  // Start performance monitoring with recording flag
+  startPerformanceMonitoring(true);
+  performanceMetrics.isRecording = true;
+
+  // Reset performance counters
+  lastPerformanceLog = performance.now();
+  
+  // ... existing recording start code ...
+}
+
+// Function to stop recording
+function stopRecording() {
+  if (!recording) return;
+  recording = false;
+  
+  // Stop recording mode in performance monitoring
+  performanceMetrics.isRecording = false;
+  
+  // Log final performance metrics
+  const stats = getPerformanceStats();
+  console.log('Recording performance summary:', stats);
+  
+  // ... existing recording stop code ...
+}
+
+// Initialize application when document is loaded
+document.addEventListener('DOMContentLoaded', () => {
+  // Start performance monitoring
+  startPerformanceMonitoring();
+  
+  // Initialize codec selection
+  initializeCodecSelection();
+  
+  // Initialize zoom and pan controls
+  initializeZoomPanControls();
+  
+  // ... existing initialization code ...
+  
+  // Start animation loop
+  animate();
+});
+
+// Function to initialize codec selection
+function initializeCodecSelection() {
+  // Create codec selection UI
+  const codecSelector = document.createElement('div');
+  codecSelector.id = 'codec-selector';
+  codecSelector.className = 'codec-selector';
+  
+  const codecOptions = [
+    { value: 'h264', label: 'H.264 (Compatibility)' },
+    { value: 'hevc', label: 'HEVC (Higher Quality/Smaller Size)', default: true },
+    { value: 'vp9', label: 'VP9 (Alternative)' }
+  ];
+  
+  // Create HTML for codec selector
+  codecSelector.innerHTML = `
+    <span>Codec:</span>
+    <select id="codec-select">
+      ${codecOptions.map(codec => 
+        `<option value="${codec.value}" ${codec.default ? 'selected' : ''}>${codec.label}</option>`
+      ).join('')}
+    </select>
+  `;
+  
+  // Add to document
+  document.body.appendChild(codecSelector);
+  
+  // Add styles
+  const style = document.createElement('style');
+  style.textContent = `
+    .codec-selector {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      font-size: 12px;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .codec-selector select {
+      background: #333;
+      color: white;
+      border: 1px solid #555;
+      border-radius: 3px;
+      padding: 3px;
+      font-size: 12px;
+    }
+  `;
+  document.head.appendChild(style);
+  
+  // Add event listener to update codec preference
+  document.getElementById('codec-select').addEventListener('change', (e) => {
+    const selectedCodec = e.target.value;
+    // Send to main process
+    window.api.send('set-codec', selectedCodec);
+    console.log(`Codec set to: ${selectedCodec}`);
+  });
+  
+  // Send initial codec preference
+  const initialCodec = document.getElementById('codec-select').value;
+  window.api.send('set-codec', initialCodec);
 }
