@@ -378,82 +378,127 @@ function blendColorsRgba(color1, color2, ratio, alpha) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// Process and display a frame in the PiP canvas
+// Function to display a frame in the PiP window
 function displayPipFrame(dataURL) {
-    if (!isPipActive) return;
+    // Validate and display the incoming PIP frame
+    console.log(`[${new Date().toISOString()}] PiP frame received: ${Math.round(dataURL?.length / 1024) || 0}KB`);
+  
+    if (!dataURL) {
+        console.error('Received empty dataURL for PiP frame');
+        return;
+    }
     
-    if (usePixi && pipApp && pipApp.stage) {
-        // PIXI.js implementation
-        try {
-            // Create or update texture with plain Image approach instead of PIXI.Texture.fromURL
+    if (!dataURL || typeof dataURL !== 'string' || !dataURL.startsWith('data:image')) {
+        console.warn('Invalid PiP frame data received');
+        return;
+    }
+    
+    // Make sure PiP container is visible
+    if (pipContainer.style.display !== 'block' && isPipActive) {
+        console.log('Ensuring PiP container is visible');
+        pipContainer.style.display = 'block';
+    }
+
+    try {
+        if (usePixi && pipApp && pipSprite) {
+            // PIXI.js implementation
+            // Create an image element to load the data URL
             const img = new Image();
             img.onload = () => {
                 try {
-                    if (!pipTexture) {
-                        // Create new texture from the loaded image
-                        pipTexture = PIXI.Texture.from(img);
-                        
-                        // Remove placeholder sprite if it exists
-                        if (pipSprite) {
-                            pipApp.stage.removeChild(pipSprite);
-                        }
-                        
-                        // Create sprite from texture
-                        pipSprite = new PIXI.Sprite(pipTexture);
-                        pipSprite.width = pipCanvas.width;
-                        pipSprite.height = pipCanvas.height;
-                        pipApp.stage.addChild(pipSprite);
-                        
-                        // Add zoom rectangle on top
-                        pipApp.stage.addChild(zoomRectGraphics);
-                    } else {
-                        // Update existing texture
-                        const baseTexture = PIXI.BaseTexture.from(img);
-                        pipTexture.baseTexture = baseTexture;
-                        pipTexture.update();
+                    // If we have an existing texture, destroy it
+                    if (pipTexture && pipTexture.baseTexture) {
+                        pipTexture.destroy(true);
                     }
                     
-                    // Update zoom rectangle
+                    // Create a new texture from the loaded image
+                    pipTexture = PIXI.Texture.from(img);
+                    
+                    // Update the sprite with the new texture
+                    pipSprite.texture = pipTexture;
+                    
+                    // Adjust sprite dimensions to fit the canvas
+                    pipSprite.width = pipCanvas.width;
+                    pipSprite.height = pipCanvas.height;
+                    
+                    // Redraw the zoom rectangle
                     updateZoomRectangle();
+                    
+                    console.log('Updated PiP sprite with new frame');
                 } catch (err) {
-                    console.error('Error updating PIXI texture:', err);
-                    // Fall back to Canvas2D if PIXI texture handling fails
-                    usePixi = false;
-                    initializeCanvas2D();
-                    displayPipFrameCanvas2D(dataURL);
+                    console.error('Error updating PiP texture:', err);
                 }
             };
+            img.onerror = (err) => {
+                console.error('Error loading PiP image:', err);
+            };
             img.src = dataURL;
-        } catch (error) {
-            console.error('Error displaying frame with PIXI.js:', error);
-            usePixi = false;
-            initializeCanvas2D();
+        } else {
+            // Canvas 2D fallback
             displayPipFrameCanvas2D(dataURL);
         }
-    } else {
-        // Canvas 2D implementation (fallback)
+    } catch (error) {
+        console.error('Error displaying PiP frame:', error);
+        // Fall back to Canvas2D if PIXI fails
         displayPipFrameCanvas2D(dataURL);
     }
 }
 
-// Fallback Canvas2D implementation for displaying frames
+// Canvas 2D fallback implementation for PiP frame display
 function displayPipFrameCanvas2D(dataURL) {
-    // Create a new image from the data URL
-    const img = new Image();
-    img.onload = () => {
-        // Clear the canvas
-        pipContext.clearRect(0, 0, pipCanvas.width, pipCanvas.height);
+    if (!pipContext) {
+        // Initialize Canvas2D context if not already done
+        initializeCanvas2D();
+    }
+    
+    try {
+        // Create an image if we don't already have one
+        if (!pipImage) {
+            pipImage = new Image();
+        }
         
-        // Draw the image scaled to fit the canvas
-        pipContext.drawImage(img, 0, 0, pipCanvas.width, pipCanvas.height);
+        // Set up image load handler
+        pipImage.onload = () => {
+            try {
+                // Clear the canvas
+                pipContext.clearRect(0, 0, pipCanvas.width, pipCanvas.height);
+                
+                // Draw the image
+                pipContext.drawImage(pipImage, 0, 0, pipCanvas.width, pipCanvas.height);
+                
+                // Draw the zoom rectangle if needed
+                if (zoomState.zoom > 1.0) {
+                    // Calculate rectangle dimensions
+                    const rectWidth = pipCanvas.width / zoomState.zoom;
+                    const rectHeight = pipCanvas.height / zoomState.zoom;
+                    
+                    // Calculate center position
+                    const scaleX = pipCanvas.width / videoWidth;
+                    const scaleY = pipCanvas.height / videoHeight;
+                    const rectCenterX = zoomState.centerX * scaleX;
+                    const rectCenterY = zoomState.centerY * scaleY;
+                    
+                    // Calculate top-left corner
+                    const rectX = rectCenterX - (rectWidth / 2);
+                    const rectY = rectCenterY - (rectHeight / 2);
+                    
+                    // Draw rectangle
+                    pipContext.strokeStyle = 'rgba(255, 95, 31, 0.8)';
+                    pipContext.lineWidth = 2;
+                    pipContext.strokeRect(rectX, rectY, rectWidth, rectHeight);
+                }
+                
+                console.log('Updated PiP canvas with new frame');
+            } catch (err) {
+                console.error('Error drawing PiP image to canvas:', err);
+            }
+        };
         
-        // Save reference to image for potential redraws
-        pipImage = img;
-        
-        // Redraw the zoom rectangle
-        updateZoomRectangle();
-    };
-    img.src = dataURL;
+        // Load the image
+        pipImage.src = dataURL;
+    } catch (error) {
+        console.error('Error in Canvas2D PiP frame display:', error);
+    }
 }
 
 // Convert PiP canvas coordinates to main video coordinates

@@ -17,6 +17,8 @@ let canvasStream = null; // Stream from canvas
 let usePixi = false; // Whether to use PIXI.js or fallback to canvas API
 let canvasContext = null; // Canvas 2D context (for fallback renderer)
 let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
+let isRecording = false; // Whether we're currently recording
+let isPaused = false; // Whether recording is paused
 
 // Border effect variables
 let borderGraphics = null; // PIXI graphics for border effect
@@ -50,6 +52,12 @@ let isPipVisible = false;
 let lastPipUpdateTime = 0;
 const PIP_UPDATE_INTERVAL = 250; // Update PiP every 250ms
 let pipSnapshotInterval = null;
+
+// Performance monitoring variables
+let frameTimeHistory = [];
+const MAX_FRAME_HISTORY = 120; // 2 seconds at 60fps
+let lastPerformanceLog = 0;
+const PERFORMANCE_LOG_INTERVAL = 10000; // Log every 10 seconds
 
 // Function to format seconds as HH:MM:SS
 function formatTime(seconds) {
@@ -196,107 +204,46 @@ function logPixiInfo() {
   }
 }
 
-// Initialize Pixi.js
+// Function to initialize Pixi.js renderer
 function initializePixi() {
   try {
+    console.log('Initializing Pixi.js');
+    
     // Get canvas element
     const canvasElement = document.getElementById('main-canvas');
-    if (!canvasElement) {
-      throw new Error('Canvas element not found');
-    }
     
-    // Get video element
-    sourceVideo = document.getElementById('source-video');
-    if (!sourceVideo) {
-      throw new Error('Source video element not found');
-    }
+    // Log WebGL capabilities for debugging
+    logPixiInfo();
     
-    // Set canvas size to match desired dimensions (4K)
-    canvasElement.width = 3840;
-    canvasElement.height = 2160;
+    // Create PIXI Application with appropriate settings for performance
+    app = new PIXI.Application({
+      view: canvasElement,
+      width: 3840,    // 4K width
+      height: 2160,   // 4K height
+      backgroundColor: 0x000000,
+      resolution: 1,  // Adjust for device scaling
+      autoDensity: true,
+      antialias: false, // Disable for performance
+      powerPreference: 'high-performance', // Request high performance GPU
+      clearBeforeRender: true,
+    });
     
-    // Log actual display size vs internal resolution
-    console.log(`Canvas display size: ${canvasElement.clientWidth}x${canvasElement.clientHeight}`);
-    console.log(`Canvas internal resolution: ${canvasElement.width}x${canvasElement.height}`);
+    // Set ticker to request animation frame mode for better performance
+    app.ticker.maxFPS = 60; // Limit to 60 FPS max
     
-    // First try to initialize Canvas 2D as fallback
-    try {
-      console.log('Trying to initialize Canvas 2D context first');
-      canvasContext = canvasElement.getContext('2d', { willReadFrequently: true });
-      
-      if (!canvasContext) {
-        console.error('Failed to get 2D context - this is unusual');
-      } else {
-        console.log('Canvas 2D context initialized successfully');
-        // Fill with black initially
-        canvasContext.fillStyle = '#000000';
-        canvasContext.fillRect(0, 0, canvasElement.width, canvasElement.height);
-      }
-    } catch (canvas2dError) {
-      console.error('Error initializing 2D context:', canvas2dError);
-    }
+    // Initialize state
+    state.currentZoom = 1.0;
+    state.targetZoom = 1.0;
     
-    // Try to initialize PIXI
-    try {
-      // First check if PIXI is actually available
-      if (typeof PIXI === 'undefined') {
-        throw new Error('PIXI is not defined. Library may not be loaded.');
-      }
-      
-      // Create a new PIXI Application with compatibility options
-      const options = {
-        view: canvasElement,
-        width: canvasElement.width,
-        height: canvasElement.height,
-        backgroundColor: 0x000000,
-        resolution: 1,
-        autoDensity: true,
-        antialias: false, // Better performance without antialiasing
-        forceCanvas: true // Force Canvas renderer for better compatibility
-      };
-      
-      // Create the application
-      app = new PIXI.Application(options);
-      
-      // Log PIXI information
-      logPixiInfo();
-      
-      // PIXI initialization was successful
-      usePixi = true;
-      console.log('PIXI.js initialized successfully');
-    } catch (pixiError) {
-      console.error('Error initializing PIXI.js:', pixiError);
-      console.log('Falling back to regular Canvas 2D rendering');
-      
-      // Fallback to Canvas 2D API
-      usePixi = false;
-      
-      // Check if we already have a valid 2D context
-      if (!canvasContext) {
-        console.log('Attempting to get 2D context again');
-        try {
-          canvasContext = canvasElement.getContext('2d');
-          if (!canvasContext) {
-            throw new Error('Could not get 2D context from canvas');
-          }
-          console.log('Canvas 2D context initialized on second attempt');
-        } catch (secondAttemptError) {
-          console.error('Failed to get 2D context on second attempt:', secondAttemptError);
-          throw new Error('Could not initialize any rendering method');
-        }
-      }
-    }
+    // If we reach this point, Pixi.js is available
+    usePixi = true;
     
-    // If using Canvas 2D, set up the render loop immediately
-    if (!usePixi && canvasContext) {
-      console.log('Setting up Canvas 2D render loop');
-      initializeCanvas2DRenderingLoop();
-    }
-    
-    console.log(`${usePixi ? 'Pixi.js' : 'Canvas 2D'} initialized successfully`);
+    console.log('Pixi.js initialized successfully');
     return true;
   } catch (error) {
-    console.error('Error initializing rendering:', error);
+    console.error('Error initializing Pixi.js:', error);
+    console.log('Falling back to Canvas 2D API');
+    usePixi = false;
     return false;
   }
 }
@@ -1237,89 +1184,120 @@ function toggleFXAA() {
 
 // Update setupPixiRendering to include FXAA setup and FPS monitoring
 async function setupPixiRendering() {
-    try {
-        // Wait for source-video to have proper dimensions
-        await waitForVideoMetadata(sourceVideo);
-        
-        // Initialize video sprite from source-video
-        const videoTexture = PIXI.Texture.from(sourceVideo);
-        videoSprite = new PIXI.Sprite(videoTexture);
-        
-        // Set initial sprite position and pivot point
-        videoSprite.position.set(app.screen.width / 2, app.screen.height / 2);
-        videoSprite.pivot.set(sourceVideo.videoWidth / 2, sourceVideo.videoHeight / 2);
-        videoSprite.scale.set(state.currentZoom);
-        
-        // Disable sprite interpolation for pixel-perfect rendering initially
-        // videoSprite.texture.baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;
-        
-        // Add video sprite to the stage
-        app.stage.addChild(videoSprite);
-        
-        // Initialize borderGraphics and add it to the stage
-        borderGraphics = new PIXI.Graphics();
-        app.stage.addChild(borderGraphics);
-        
-        // Add FXAA filter if not already added
-        if (!fxaaFilter) {
-            fxaaFilter = new PIXI.filters.FXAAFilter();
-            // Don't enable by default - user can toggle with button
-            fxaaEnabled = false;
+  try {
+    // Wait for source-video to have proper dimensions
+    await waitForVideoMetadata(sourceVideo);
+    
+    // Initialize video sprite from source-video
+    const videoTexture = PIXI.Texture.from(sourceVideo);
+    videoSprite = new PIXI.Sprite(videoTexture);
+    
+    // Set initial sprite position and pivot point
+    videoSprite.position.set(app.screen.width / 2, app.screen.height / 2);
+    videoSprite.pivot.set(sourceVideo.videoWidth / 2, sourceVideo.videoHeight / 2);
+    videoSprite.scale.set(state.currentZoom);
+    
+    // Add video sprite to the stage
+    app.stage.addChild(videoSprite);
+    
+    // Initialize borderGraphics and add it to the stage
+    borderGraphics = new PIXI.Graphics();
+    app.stage.addChild(borderGraphics);
+    
+    // Add FXAA filter
+    if (!fxaaFilter) {
+      fxaaFilter = new PIXI.filters.FXAAFilter();
+      fxaaEnabled = false; // Don't enable by default
+    }
+    
+    console.log('Video sprite and texture setup complete');
+    
+    // Performance variables for rendering optimization
+    let lastTextureUpdateTime = 0;
+    const TEXTURE_UPDATE_INTERVAL = 16; // ~60 FPS (16.67ms)
+    
+    // Frame skip counter for recording mode
+    let frameSkipCounter = 0;
+    
+    // Set up a ticker to update the video sprite
+    app.ticker.add(() => {
+      try {
+        // Performance optimization: Frame skipping during recording
+        if (isRecording) {
+          // Skip every nth frame during recording (adjust based on CPU usage)
+          frameSkipCounter = (frameSkipCounter + 1) % 2;
+          if (frameSkipCounter !== 0) {
+            return; // Skip this frame
+          }
         }
         
-        // For testing, you can enable FXAA by default
-        // toggleFXAA();
+        // Performance optimization: Only update texture at ~60fps maximum
+        const now = performance.now();
+        if (now - lastTextureUpdateTime < TEXTURE_UPDATE_INTERVAL) {
+          return;
+        }
+        lastTextureUpdateTime = now;
         
-        // Debug log
-        debugLog('Pixi sprites and textures set up', true);
-        
-        // Set up ticker for animation loop
-        const tickerCallback = () => {
-            try {
-                // Skip rendering if we don't have a valid videoSprite or texture
-                if (!videoSprite || !videoSprite.texture || !videoSprite.texture.valid) {
-                    return;
-                }
-                
-                // Always update the texture from the video
-                if (sourceVideo.readyState >= 2) { // HAVE_CURRENT_DATA or better
-                    videoSprite.texture.update();
-                }
-                
-                // Interpolate smoothly to target state
-                const interpolationFactor = 0.1; // Adjust for smoother/faster transitions
-                
-                state.currentZoom += (state.targetZoom - state.currentZoom) * interpolationFactor;
-                state.currentCenterX += (state.targetCenterX - state.currentCenterX) * interpolationFactor;
-                state.currentCenterY += (state.targetCenterY - state.currentCenterY) * interpolationFactor;
-                
-                // Apply updated position and scale
-                videoSprite.scale.set(state.currentZoom);
-                
-                // Calculate position based on zoom center
-                videoSprite.position.x = app.screen.width / 2 - (state.currentCenterX - (sourceVideo.videoWidth / 2)) * state.currentZoom;
-                videoSprite.position.y = app.screen.height / 2 - (state.currentCenterY - (sourceVideo.videoHeight / 2)) * state.currentZoom;
-                
-                // Draw the border effect
-                drawBorderEffect();
-                
-                // Send zoom state updates to panel at regular intervals
-                // Throttled in the sendZoomStateUpdate function
-                sendZoomStateUpdate();
-                
-            } catch (error) {
-                console.error('Error in PIXI ticker callback:', error);
+        // Only update the texture if the video is playing and has valid data
+        if (sourceVideo && sourceVideo.readyState >= 2) {
+          // Update the texture from the video element
+          if (videoSprite && videoSprite.texture && videoSprite.texture.baseTexture) {
+            // During recording, only update texture every other frame to reduce CPU load
+            if (!isRecording || now % 2 === 0) {
+              videoSprite.texture.baseTexture.update();
             }
-        };
+          }
+        }
         
-        // Add the ticker callback
-        app.ticker.add(tickerCallback);
+        // Smoothly interpolate to target state
+        const interpolationFactor = isRecording ? 0.2 : 0.1; // Faster interpolation during recording
+                 
+        state.currentZoom += (state.targetZoom - state.currentZoom) * interpolationFactor;
+        state.currentCenterX += (state.targetCenterX - state.currentCenterX) * interpolationFactor;
+        state.currentCenterY += (state.targetCenterY - state.currentCenterY) * interpolationFactor;
         
-        return true;
-    } catch (error) {
-        console.error('Error in setupPixiRendering:', error);
-        return false;
-    }
+        // Apply updated position and scale
+        videoSprite.scale.set(state.currentZoom);
+        
+        // Calculate position based on zoom center
+        videoSprite.position.x = app.screen.width / 2 - (state.currentCenterX - (sourceVideo.videoWidth / 2)) * state.currentZoom;
+        videoSprite.position.y = app.screen.height / 2 - (state.currentCenterY - (sourceVideo.videoHeight / 2)) * state.currentZoom;
+        
+        // Draw the border effect - throttle during recording to improve performance
+        if (!isRecording || now % 3 === 0) {
+          drawBorderEffect();
+        }
+        
+        // Performance optimization: Only update PiP when visible and not too often
+        if (isPipVisible && now - lastPipUpdateTime >= (isRecording ? 500 : PIP_UPDATE_INTERVAL)) {
+          sendPipSnapshot();
+          lastPipUpdateTime = now;
+        }
+        
+        // Monitor performance during recording
+        if (isRecording && window.performance && window.performance.memory) {
+          const memoryInfo = window.performance.memory;
+          if (memoryInfo.usedJSHeapSize > 1000000000) { // 1GB
+            console.warn('High memory usage during recording:', 
+                        (memoryInfo.usedJSHeapSize / 1024 / 1024).toFixed(2) + 'MB');
+          }
+        }
+      } catch (error) {
+        console.error('Error in Pixi ticker:', error);
+      }
+    });
+    
+    // Get the canvas stream for recording
+    console.log('Getting stream from canvas with 60fps');
+    const canvasElement = document.getElementById('main-canvas');
+    canvasStream = canvasElement.captureStream(60);
+    
+    console.log('Pixi rendering setup complete');
+    return true;
+  } catch (error) {
+    console.error('Error setting up Pixi rendering:', error);
+    throw error;
+  }
 }
 
 // Function to draw the border effect
@@ -1469,41 +1447,71 @@ function setupMediaRecorder() {
     // Log available MIME types for debugging
     console.log('Available MIME types:');
     const types = [
+      'video/mp4;codecs=hvc1',      // HEVC (Apple's naming)
+      'video/mp4;codecs=hevc',      // HEVC (alternate naming)
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
       'video/webm;codecs=h264',
       'video/mp4;codecs=h264',
-      'video/mp4;codecs=avc1',
-      'video/mp4;codecs=hvc1'
+      'video/mp4;codecs=avc1'
     ];
     
     types.forEach(type => {
-      console.log(`${type}: ${MediaRecorder.isTypeSupported(type)}`);
+      console.log(`${type}: ${isCodecSupported(type)}`);
     });
     
-    // Check for best supported codec in order of preference
-    // For better compatibility, prioritize WebM formats first
+    // Check for HEVC support first
     let mimeType = '';
-    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-      mimeType = 'video/webm;codecs=vp9'; // VP9 (good quality/compression)
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      mimeType = 'video/webm;codecs=vp8'; // VP8 (widely supported)
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
-      mimeType = 'video/webm;codecs=h264'; // WebM with H.264
-    } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
-      mimeType = 'video/mp4;codecs=h264'; // H.264 (good compatibility)
-    } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=hvc1')) {
-      mimeType = 'video/mp4;codecs=hvc1'; // HEVC (best quality/compression)
-    } else {
-      // Use default
-      mimeType = ''; 
+    let hevcSupported = false;
+    
+    // Check for HEVC support (both common variants)
+    if (isCodecSupported('video/mp4;codecs=hvc1')) {
+      mimeType = 'video/mp4;codecs=hvc1';
+      hevcSupported = true;
+      console.log('HEVC encoding is supported (hvc1)! Using hardware-accelerated encoding.');
+    } else if (isCodecSupported('video/mp4;codecs=hevc')) {
+      mimeType = 'video/mp4;codecs=hevc';
+      hevcSupported = true;
+      console.log('HEVC encoding is supported (hevc)! Using hardware-accelerated encoding.');
+    }
+    
+    // If HEVC not supported, fall back to H.264 or other formats
+    if (!hevcSupported) {
+      console.warn('HEVC (H.265) encoding is not supported by this browser. Falling back to H.264 or other codecs.');
+      
+      // Try H.264 in MP4 container
+      if (isCodecSupported('video/mp4;codecs=h264') || 
+          isCodecSupported('video/mp4;codecs=avc1')) {
+        mimeType = isCodecSupported('video/mp4;codecs=h264') ? 
+                  'video/mp4;codecs=h264' : 'video/mp4;codecs=avc1';
+        console.log('Using H.264 codec for recording');
+      }
+      // WebM fallbacks if needed
+      else if (isCodecSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+        console.log('Using VP9 codec for recording');
+      } 
+      else if (isCodecSupported('video/webm;codecs=h264')) {
+        mimeType = 'video/webm;codecs=h264';
+        console.log('Using WebM/H.264 codec for recording');
+      }
+      else if (isCodecSupported('video/webm;codecs=vp8')) {
+        mimeType = 'video/webm;codecs=vp8';
+        console.log('Using VP8 codec for recording');
+      }
+      else {
+        // Use default
+        mimeType = '';
+        console.warn('No explicitly supported video codec found. Using browser default.');
+      }
     }
     
     console.log(`Using MIME type: ${mimeType || 'default'}`);
     
     // Create media recorder options with high bitrate for 4K/60FPS
+    // Using higher bitrate for H.264 to maintain quality, lower for HEVC due to better compression
     const options = {
-      videoBitsPerSecond: 20000000 // 20 Mbps for balance of quality and file size
+      videoBitsPerSecond: hevcSupported ? 20000000 : 30000000 // 20 Mbps for HEVC, 30 Mbps for others
     };
     
     // Add mime type if we have a supported one
@@ -1511,10 +1519,15 @@ function setupMediaRecorder() {
       options.mimeType = mimeType;
     }
     
+    // Log the options for debugging
+    console.log('MediaRecorder options:', options);
+    
     // Create media recorder
     mediaRecorder = new MediaRecorder(canvasStream, options);
     
-    // Clear recorded chunks array
+    // Tell main process what MIME type is being used for recording
+    window.electronAPI.send('recordingMimeType', { mimeType: mediaRecorder.mimeType || 'unknown' });
+    
     recordedChunks = [];
     
     // Handle data available event
@@ -1567,29 +1580,46 @@ function setupMediaRecorder() {
     };
     
     console.log('MediaRecorder setup complete');
-    
     return true;
   } catch (error) {
-    console.error('Error setting up media recorder:', error);
+    console.error('Error setting up MediaRecorder:', error);
     return false;
   }
 }
 
-// Function to start recording
+// Function to start canvas recording
 function startCanvasRecording() {
   try {
-    if (!mediaRecorder) {
-      throw new Error('MediaRecorder not initialized');
+    // Check if there's an existing mediaRecorder
+    if (mediaRecorder) {
+      console.warn('MediaRecorder already exists, stopping it first');
+      try {
+        mediaRecorder.stop();
+      } catch (e) {
+        console.error('Error stopping existing MediaRecorder:', e);
+        // Continue with new setup
+      }
     }
     
-    console.log('Starting canvas recording');
+    if (!canvasStream) {
+      console.error('Canvas stream not available');
+      return false;
+    }
     
-    // Start recording with segments
-    // For 4K video, use larger segments (20 seconds) to reduce overhead
-    // but small enough for reasonable concatenation times
-    mediaRecorder.start(20000); // 20 second segments
+    // Set up MediaRecorder with the canvas stream
+    console.log('Setting up MediaRecorder for canvas recording');
+    if (!setupMediaRecorder()) {
+      console.error('Failed to set up MediaRecorder');
+      return false;
+    }
     
-    // Notify main process that recording has started
+    // Start recording with optimized segment size
+    // Use smaller segments (5 seconds) for more frequent saves and better recovery potential
+    // Balance between too small (overhead) and too large (risk of losing more on crash)
+    console.log('Starting canvas recording with 5-second segments');
+    mediaRecorder.start(5000); // 5-second segments
+    
+    // Tell main process recording has started
     window.electronAPI.startCanvasRecording();
     
     return true;
@@ -1620,13 +1650,30 @@ function stopCanvasRecording() {
 // Function to pause recording
 function pauseCanvasRecording() {
   try {
-    if (!mediaRecorder || mediaRecorder.state !== 'recording') {
-      console.warn('MediaRecorder not recording, cannot pause');
+    if (!mediaRecorder) {
+      console.warn('MediaRecorder not initialized, cannot pause');
+      return false;
+    }
+    
+    if (mediaRecorder.state !== 'recording') {
+      console.warn(`MediaRecorder not recording (current state: ${mediaRecorder.state}), cannot pause`);
       return false;
     }
     
     console.log('Pausing canvas recording');
     mediaRecorder.pause();
+    
+    // Pause the timer
+    pauseTimer();
+    
+    // Update local state (UI will be updated via main process state update)
+    isPaused = true;
+    
+    // Notify main process about pause
+    window.electronAPI.pauseRecording();
+    
+    // Log MediaRecorder state after pause
+    console.log(`MediaRecorder state after pause: ${mediaRecorder.state}`);
     
     return true;
   } catch (error) {
@@ -1638,13 +1685,30 @@ function pauseCanvasRecording() {
 // Function to resume recording
 function resumeCanvasRecording() {
   try {
-    if (!mediaRecorder || mediaRecorder.state !== 'paused') {
-      console.warn('MediaRecorder not paused, cannot resume');
+    if (!mediaRecorder) {
+      console.warn('MediaRecorder not initialized, cannot resume');
+      return false;
+    }
+    
+    if (mediaRecorder.state !== 'paused') {
+      console.warn(`MediaRecorder not paused (current state: ${mediaRecorder.state}), cannot resume`);
       return false;
     }
     
     console.log('Resuming canvas recording');
     mediaRecorder.resume();
+    
+    // Resume the timer
+    startTimer();
+    
+    // Update local state (UI will be updated via main process state update)
+    isPaused = false;
+    
+    // Notify main process about resume
+    window.electronAPI.resumeRecording();
+    
+    // Log MediaRecorder state after resume
+    console.log(`MediaRecorder state after resume: ${mediaRecorder.state}`);
     
     return true;
   } catch (error) {
@@ -1692,8 +1756,9 @@ async function populateSources() {
 // Function to update UI based on recording state
 function updateUIState(state) {
   console.log('updateUIState called with state:', state);
-  const isRecording = state.isRecording;
-  const isPaused = state.isPaused;
+  // Update local state
+  isRecording = state.isRecording;
+  isPaused = state.isPaused;
   
   const sourceSelect = document.getElementById('sourceSelect');
   const refreshButton = document.getElementById('refreshSources');
@@ -1973,6 +2038,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Initialize zoom controls
   initializeZoomControls();
   
+  // Initialize performance monitoring
+  requestAnimationFrame(trackFrameTime);
+  console.log('Performance monitoring initialized');
+  
   // Set up PiP and zoom event listeners
   window.electronAPI.onTogglePip(() => {
     console.log('Toggle PiP command received from main process');
@@ -2123,46 +2192,78 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   });
   
-  // Setup pause recording button
-  pauseRecordingBtn.addEventListener('click', () => {
-    console.log('Pause Recording button clicked');
-    
-    // Pause canvas recording
-    if (pauseCanvasRecording()) {
-      window.electronAPI.pauseRecording();
-    }
-  });
-  
-  // Setup resume recording button
-  resumeRecordingBtn.addEventListener('click', () => {
-    console.log('Resume Recording button clicked');
-    
-    // Resume canvas recording
-    if (resumeCanvasRecording()) {
-      window.electronAPI.resumeRecording();
-    }
-  });
-  
   // Setup stop recording button
-  stopRecordingBtn.addEventListener('click', () => {
+  stopRecordingBtn.addEventListener('click', async () => {
     console.log('Stop Recording button clicked');
     recordingMessageEl.textContent = 'Stopping recording...';
     recordingMessageEl.className = 'pending';
     
-    // Stop canvas recording
     if (stopCanvasRecording()) {
-      console.log('Canvas recording stopped successfully');
+      statusEl.textContent = 'Recording stopped, processing video...';
+      statusEl.className = 'status pending';
     } else {
+      statusEl.textContent = 'Error stopping recording';
+      statusEl.className = 'status error';
       recordingMessageEl.textContent = 'Error stopping recording';
       recordingMessageEl.className = 'error';
     }
   });
   
-  // Listen for hotkey-triggered start recording
-  window.electronAPI.on('hotkey-start-recording', () => {
-    console.log('Hotkey triggered start recording');
-    if (!startRecordingBtn.disabled) {
+  // Setup pause recording button
+  pauseRecordingBtn.addEventListener('click', async () => {
+    console.log('Pause Recording button clicked');
+    
+    if (pauseCanvasRecording()) {
+      // UI will be updated via the state update from main process
+      window.electronAPI.pauseRecording(); // Notify main process
+    } else {
+      statusEl.textContent = 'Error pausing recording';
+      statusEl.className = 'status error';
+    }
+  });
+  
+  // Setup resume recording button
+  resumeRecordingBtn.addEventListener('click', async () => {
+    console.log('Resume Recording button clicked');
+    
+    if (resumeCanvasRecording()) {
+      // UI will be updated via the state update from main process
+      window.electronAPI.resumeRecording(); // Notify main process
+    } else {
+      statusEl.textContent = 'Error resuming recording';
+      statusEl.className = 'status error';
+    }
+  });
+  
+  // Listen for hotkey-triggered recording start/pause/resume
+  window.electronAPI.on('hotkey-start-recording', async () => {
+    console.log('Hotkey-triggered cycle: Start→Pause→Resume→Pause...');
+    
+    // Check current recording state to determine next action
+    if (!isRecording) {
+      // STATE: Not recording -> Start recording
+      console.log('Hotkey action: START recording');
+      
+      // Check if we have a source selected
+      const selectedSourceId = sourceSelect.value;
+      if (!selectedSourceId) {
+        statusEl.textContent = 'Please select a source first';
+        statusEl.className = 'status error';
+        return;
+      }
+      
+      // Start recording
       startRecordingBtn.click();
+    } 
+    else if (isRecording && !isPaused) {
+      // STATE: Recording and not paused -> Pause recording
+      console.log('Hotkey action: PAUSE recording');
+      pauseRecordingBtn.click();
+    }
+    else if (isRecording && isPaused) {
+      // STATE: Recording and paused -> Resume recording
+      console.log('Hotkey action: RESUME recording');
+      resumeRecordingBtn.click();
     }
   });
   
@@ -2456,89 +2557,169 @@ window.electronAPI.on('toggle-pip', () => {
     togglePip();
 });
 
-// Add togglePip function
-let lastToggleTime = 0;
-const TOGGLE_DEBOUNCE_TIME = 200; // ms
-
+// Function to toggle Picture-in-Picture mode
 function togglePip() {
-    try {
-        // Debounce repeated toggle calls that come too quickly
-        const now = performance.now();
-        if (now - lastToggleTime < TOGGLE_DEBOUNCE_TIME) {
-            console.log('Ignoring toggle PiP call - too soon after previous toggle');
-            return;
+  try {
+    console.log(`Toggling PiP. Current state: ${isPipVisible}`);
+    
+    // Toggle PiP state
+    isPipVisible = !isPipVisible;
+    console.log(`New PiP state: ${isPipVisible}`);
+    
+    // Update the PiP state in main process
+    window.electronAPI.sendPipStateUpdate(isPipVisible);
+    
+    if (isPipVisible) {
+      console.log('PiP activated - setting up snapshot interval');
+      
+      // Clear any existing interval
+      if (pipSnapshotInterval) {
+        clearInterval(pipSnapshotInterval);
+        pipSnapshotInterval = null;
+      }
+      
+      // Send an immediate snapshot to initialize the display
+      setTimeout(() => {
+        sendPipSnapshot();
+      }, 100);
+      
+      // Start regular updates with appropriate interval
+      const updateInterval = isRecording ? 750 : PIP_UPDATE_INTERVAL;
+      console.log(`Starting PiP updates with interval ${updateInterval}ms`);
+      
+      pipSnapshotInterval = setInterval(() => {
+        try {
+          sendPipSnapshot();
+        } catch (err) {
+          console.error('Error in PiP snapshot interval:', err);
         }
-        lastToggleTime = now;
-        
-        console.log('Current PiP visibility before toggle:', isPipVisible);
-        isPipVisible = !isPipVisible;
-        console.log('New PiP visibility after toggle:', isPipVisible);
-        
-        // Send PiP state update to main process
-        window.electronAPI.sendPipStateUpdate(isPipVisible);
-        console.log('Sent PiP state update to main process:', isPipVisible);
-        
-        // Start or stop sending PiP snapshots based on visibility
-        if (isPipVisible) {
-            // Send an immediate snapshot
-            sendPipSnapshot();
-            console.log('Sent initial PiP snapshot');
-            
-            // Set up an interval to send snapshots regularly
-            if (!pipSnapshotInterval) {
-                console.log('Setting up PiP snapshot interval');
-                pipSnapshotInterval = setInterval(sendPipSnapshot, PIP_UPDATE_INTERVAL);
-            }
-        } else {
-            // Clear the snapshot interval if PiP is hidden
-            if (pipSnapshotInterval) {
-                console.log('Clearing PiP snapshot interval');
-                clearInterval(pipSnapshotInterval);
-                pipSnapshotInterval = null;
-            }
-        }
-    } catch (err) {
-        console.error('Error toggling PiP:', err);
+      }, updateInterval);
+    } else {
+      console.log('PiP deactivated - cleaning up');
+      
+      // Stop sending snapshots
+      if (pipSnapshotInterval) {
+        console.log('Clearing PiP snapshot interval');
+        clearInterval(pipSnapshotInterval);
+        pipSnapshotInterval = null;
+      }
+      
+      // Clear last update time
+      lastPipUpdateTime = 0;
     }
+    
+    return true;
+  } catch (error) {
+    console.error('Error toggling PiP mode:', error);
+    return false;
+  }
 }
 
-// Function to create and send a snapshot for PiP
+// Function to send a snapshot to the PiP window
 function sendPipSnapshot() {
-    if (!isPipVisible || !sourceVideo) return;
+  try {
+    // Skip if PiP is not visible
+    if (!isPipVisible) return;
     
-    try {
-        // Throttle updates to reduce performance impact
-        const now = performance.now();
-        if (now - lastPipUpdateTime < PIP_UPDATE_INTERVAL) return;
-        lastPipUpdateTime = now;
-        
-        // Create an offscreen canvas
-        const offscreenCanvas = document.createElement('canvas');
-        const ctx = offscreenCanvas.getContext('2d');
-        if (!ctx) {
-            console.error('Could not get 2D context for offscreen canvas');
-            return;
-        }
-        
-        // Set canvas size to a small size for efficiency (maintain aspect ratio)
-        const aspectRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
-        offscreenCanvas.width = 210; // Match the PiP canvas width in panel.html
-        offscreenCanvas.height = Math.round(offscreenCanvas.width / aspectRatio);
-        
-        // Draw the video frame to the canvas (unzoomed)
-        ctx.drawImage(sourceVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        
-        // Convert to data URL (JPEG for better performance)
-        const dataURL = offscreenCanvas.toDataURL('image/jpeg', 0.7);
-        
-        // Send the data URL to the main process
-        window.electronAPI.sendPipFrameUpdate(dataURL);
-        
-        // Also send the current zoom state
-        sendZoomStateUpdate();
-    } catch (err) {
-        console.error('Error creating PiP snapshot:', err);
+    // Throttle updates to improve performance
+    const now = Date.now();
+    const updateInterval = isRecording ? 750 : PIP_UPDATE_INTERVAL; // More aggressive throttling during recording
+    if (now - lastPipUpdateTime < updateInterval) {
+      return;
     }
+    
+    lastPipUpdateTime = now;
+    
+    // Debug log to track PiP snapshot generation
+    console.log('Generating PiP snapshot');
+    
+    // Get canvas element - ensure it exists
+    const canvasElement = document.getElementById('main-canvas');
+    if (!canvasElement) {
+      console.error('Cannot find main-canvas element for PiP snapshot');
+      return false;
+    }
+    
+    // Make sure we have a valid source video
+    if (!sourceVideo || !sourceVideo.videoWidth || !sourceVideo.videoHeight) {
+      console.warn('Source video not ready for PiP snapshot');
+      return false;
+    }
+    
+    // Create a temporary canvas for the snapshot
+    // Using a scaled-down version to improve performance
+    const tempCanvas = document.createElement('canvas');
+    const scale = isRecording ? 0.25 : 0.4; // Balance between performance and quality
+    tempCanvas.width = Math.floor(canvasElement.width * scale);
+    tempCanvas.height = Math.floor(canvasElement.height * scale);
+    
+    // Get 2D context, falling back to standard options if creation fails
+    let tempCtx;
+    try {
+      tempCtx = tempCanvas.getContext('2d', { alpha: false });
+      // Use medium quality interpolation for better visuals while maintaining performance
+      tempCtx.imageSmoothingQuality = isRecording ? 'low' : 'medium';
+    } catch (e) {
+      console.warn('Failed to create optimized canvas context, using default:', e);
+      tempCtx = tempCanvas.getContext('2d');
+    }
+    
+    if (!tempCtx) {
+      console.error('Failed to get 2D context for PiP canvas');
+      return false;
+    }
+    
+    // Use a simpler approach - draw directly from source video for reliability
+    // This is less optimal but more reliable than using the main canvas
+    try {
+      // Fill with black background first
+      tempCtx.fillStyle = '#000';
+      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      
+      // Draw the video directly
+      tempCtx.drawImage(sourceVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+      
+      // Overlay zoom rectangle if we're zoomed in
+      if (state.currentZoom > 1.0) {
+        // Calculate visible area
+        const visibleWidth = tempCanvas.width / state.currentZoom;
+        const visibleHeight = tempCanvas.height / state.currentZoom;
+        
+        // Center point
+        const centerX = tempCanvas.width / 2;
+        const centerY = tempCanvas.height / 2;
+        
+        // Draw rectangle around visible area
+        tempCtx.strokeStyle = 'rgba(255, 95, 31, 0.8)'; // Orange from the border colors
+        tempCtx.lineWidth = 2;
+        tempCtx.strokeRect(
+          centerX - visibleWidth/2,
+          centerY - visibleHeight/2,
+          visibleWidth,
+          visibleHeight
+        );
+      }
+      
+      // Convert to data URL (JPEG for better performance compared to PNG)
+      // Use medium quality for better visuals
+      const jpegQuality = isRecording ? 0.7 : 0.8;
+      const dataURL = tempCanvas.toDataURL('image/jpeg', jpegQuality);
+      
+      // Debug - log data size
+      console.log(`PiP snapshot generated: ${Math.round(dataURL.length / 1024)}KB | Dimensions: ${tempCanvas.width}x${tempCanvas.height} | Quality: ${jpegQuality} | Update interval: ${updateInterval}ms`);
+      
+      // Send to main process
+      window.electronAPI.sendPipFrameUpdate(dataURL);
+      
+      return true;
+    } catch (err) {
+      console.error('Error drawing to PiP canvas:', err);
+      return false;
+    }
+  } catch (error) {
+    console.error('Error sending PiP snapshot:', error);
+    return false;
+  }
 }
 
 // Function to send current zoom state to the panel
@@ -2590,4 +2771,89 @@ function waitForVideoMetadata(videoElement) {
             }, { once: true });
         }
     });
+}
+
+// Helper function to safely check codec support
+function isCodecSupported(mimeType) {
+  try {
+    return MediaRecorder.isTypeSupported(mimeType);
+  } catch (err) {
+    console.warn(`Error checking support for ${mimeType}:`, err);
+    return false;
+  }
+}
+
+// Helper function to log performance metrics
+function logPerformanceMetrics() {
+  const now = performance.now();
+  
+  // Only log periodically to reduce console spam
+  if (now - lastPerformanceLog < PERFORMANCE_LOG_INTERVAL) return;
+  lastPerformanceLog = now;
+  
+  // Calculate fps from frame time history
+  if (frameTimeHistory.length < 2) return;
+  
+  // Calculate average frame time
+  let totalTime = 0;
+  let droppedFrames = 0;
+  
+  for (let i = 1; i < frameTimeHistory.length; i++) {
+    const frameTime = frameTimeHistory[i] - frameTimeHistory[i-1];
+    totalTime += frameTime;
+    
+    // Count frames taking more than 20ms (< 50fps) as "dropped"
+    if (frameTime > 20) {
+      droppedFrames++;
+    }
+  }
+  
+  const avgFrameTime = totalTime / (frameTimeHistory.length - 1);
+  const fps = 1000 / avgFrameTime;
+  const dropRate = (droppedFrames / (frameTimeHistory.length - 1)) * 100;
+  
+  console.log(
+    `Performance: ${fps.toFixed(1)} FPS, ` +
+    `Avg frame time: ${avgFrameTime.toFixed(2)}ms, ` +
+    `Dropped frames: ${dropRate.toFixed(2)}% (${droppedFrames}/${frameTimeHistory.length - 1})`
+  );
+  
+  // Check against target thresholds from 14.md
+  if (isRecording) {
+    if (dropRate > 0.5) {
+      console.warn(`WARNING: Dropped frame rate (${dropRate.toFixed(2)}%) exceeds target threshold (0.5%)`);
+    }
+    
+    if (fps < 59.5) {
+      console.warn(`WARNING: FPS (${fps.toFixed(1)}) is below target threshold (59.5)`);
+    }
+    
+    // Memory usage monitoring
+    if (window.performance && window.performance.memory) {
+      const memUsageMB = window.performance.memory.usedJSHeapSize / (1024 * 1024);
+      console.log(`Memory usage: ${memUsageMB.toFixed(2)} MB`);
+    }
+  }
+  
+  // Reset history after logging to only track recent performance
+  frameTimeHistory = frameTimeHistory.slice(-MAX_FRAME_HISTORY/2);
+}
+
+// Function to track frame times for performance monitoring
+function trackFrameTime() {
+  const now = performance.now();
+  frameTimeHistory.push(now);
+  
+  // Keep history limited to MAX_FRAME_HISTORY entries
+  if (frameTimeHistory.length > MAX_FRAME_HISTORY) {
+    frameTimeHistory.shift();
+  }
+  
+  // Log metrics periodically
+  if (isRecording) {
+    logPerformanceMetrics();
+  }
+  
+  // Schedule next tracking
+  requestAnimationFrame(trackFrameTime);
 }

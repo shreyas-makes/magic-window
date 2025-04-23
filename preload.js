@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'pip-frame-update',
       'pip-state-update',
       'video-size-update',
-      'zoom-state-update'
+      'zoom-state-update',
+      'recordingMimeType'
     ];
     if (validChannels.includes(channel)) {
       console.log('Sending IPC message:', channel);

@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('panelAPI', {
   },
   onPipFrameUpdate: (callback) => {
     ipcRenderer.on('pip-frame-update', (event, dataURL) => {
+      console.log(`Panel: Received PiP frame update: ${dataURL ? Math.round(dataURL.length / 1024) : 0}KB`);
       callback(dataURL);
     });
   },

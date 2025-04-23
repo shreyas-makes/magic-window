@@ -153,13 +153,12 @@ function sendStateUpdate() {
 function toggleRecording() {
   if (!isRecording) {
     // If not recording, start
-    if (sourceId) {
+    // Check if we have a canvas renderer setup (not using recorder window anymore)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Start canvas recording through the main window's renderer
       mainWindow.webContents.send('hotkey-start-recording');
     } else {
-      console.warn('No source selected for recording.');
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', 'Please select a source first.');
-      }
+      console.warn('No main window available for recording.');
     }
   } else if (isPaused) {
     // If paused, resume
@@ -559,9 +558,9 @@ function setupSystemCapabilities() {
 // Register global shortcuts
 function registerGlobalShortcuts() {
   try {
-    // Register Cmd+R/Ctrl+R for recording toggle
-    globalShortcut.register('CommandOrControl+R', () => {
-      console.log('Cmd+R pressed (toggle recording)');
+    // Register Cmd+Shift+9 for recording cycle (Start->Pause->Resume)
+    globalShortcut.register('CommandOrControl+Shift+9', () => {
+      console.log('Cmd+Shift+9 pressed (toggle recording cycle)');
       toggleRecording();
     });
     
@@ -1115,11 +1114,13 @@ app.whenReady().then(() => {
     }
   });
   
-  // Handle MIME type notification
-  ipcMain.on('recording-mime-type', (event, { mimeType }) => {
-    console.log('Recording using MIME type:', mimeType);
+  // Handle recording MIME type information from renderer
+  ipcMain.on('recordingMimeType', (event, data) => {
+    console.log('Received recording MIME type information:', data);
+    
+    // Pass the MIME type to the main window for display
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('recordingMimeType', { mimeType });
+      mainWindow.webContents.send('recordingMimeType', data);
     }
   });
 
@@ -1318,14 +1319,34 @@ function createOrShowFloatingPanel() {
 function setupIpcHandlers() {
   // Relay pip-frame-update from renderer to panel
   ipcMain.on('pip-frame-update', (event, dataURL) => {
+    console.log(`Received PiP frame update: ${dataURL ? Math.round(dataURL.length / 1024) : 0}KB`);
+    
+    if (!dataURL || typeof dataURL !== 'string' || !dataURL.startsWith('data:image')) {
+      console.warn('Invalid PiP frame data received');
+      return;
+    }
+    
     if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+      // Ensure panel is visible when receiving frames
+      if (!floatingPanelWindow.isVisible()) {
+        floatingPanelWindow.show();
+      }
+      
+      try {
+        floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+        console.log('PiP frame forwarded to panel window');
+      } catch (err) {
+        console.error('Error sending PiP frame to panel:', err);
+      }
+    } else {
+      console.warn('Cannot send PiP frame: panel window not available');
     }
   });
   
   // Relay pip-state-update from renderer to panel
   ipcMain.on('pip-state-update', (event, isActive) => {
     if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      console.log(`Forwarding PiP state to panel: ${isActive}`);
       floatingPanelWindow.webContents.send('update-pip-state', isActive);
     }
   });
