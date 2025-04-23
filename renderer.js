@@ -1203,7 +1203,7 @@ async function setupPixiRendering() {
 
                     // Apply offset based on normalized positions multiplied by zoom factor
                     videoSprite.position.x = canvasWidth / 2 - (normalizedZoomX * sourceVideo.videoWidth * scale * (state.currentZoom - 1));
-                    videoSprite.position.y = canvasHeight / 2 - (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1));
+                    videoSprite.position.y = canvasHeight / 2 + (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1)); // Changed minus to plus
                 } else {
                     // Reset to center when not zoomed
                     videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
@@ -2073,6 +2073,14 @@ function initializeZoomControls() {
     // Add new position control buttons
     const zoomControlsContainer = document.querySelector('.zoom-controls .button-group');
     if (zoomControlsContainer) {
+        // Add FXAA toggle button first
+        const fxaaToggleButton = document.createElement('button');
+        fxaaToggleButton.id = 'toggle-fxaa';
+        fxaaToggleButton.className = 'btn info';
+        fxaaToggleButton.textContent = 'Toggle FXAA';
+        fxaaToggleButton.addEventListener('click', toggleFXAA);
+        zoomControlsContainer.appendChild(fxaaToggleButton);
+
         // Add top-right and bottom-left buttons
         const moveTopRightButton = document.createElement('button');
         moveTopRightButton.id = 'move-top-right';
