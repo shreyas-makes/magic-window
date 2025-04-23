@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Send a message to the main process
   send: (channel, data) => {
     // Only allow certain channels to be sent
-    let validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'open-file', 'pauseRecording', 'resumeRecording', 'startCanvasRecording', 'sendBlobChunk'];
+    let validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'open-file', 'pauseRecording', 'resumeRecording', 'startCanvasRecording', 'sendBlobChunk', 'zoom-level-update'];
     if (validChannels.includes(channel)) {
       console.log('Sending IPC message:', channel);
       ipcRenderer.send(channel, data);

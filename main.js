@@ -556,6 +556,44 @@ function setupSystemCapabilities() {
   }
 }
 
+// Function to register global shortcuts
+function registerGlobalShortcuts() {
+  // Register keyboard shortcut for zoom in (Command+Plus)
+  globalShortcut.register('CommandOrControl+Plus', () => {
+    console.log('Keyboard shortcut for zoom in triggered');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('zoom-in');
+    }
+  });
+
+  // Register keyboard shortcut for zoom in (Command+Equal, same key as Plus but without shift)
+  globalShortcut.register('CommandOrControl+=', () => {
+    console.log('Keyboard shortcut for zoom in triggered (using =)');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('zoom-in');
+    }
+  });
+
+  // Register keyboard shortcut for zoom out (Command+Minus)
+  globalShortcut.register('CommandOrControl+-', () => {
+    console.log('Keyboard shortcut for zoom out triggered');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('zoom-out');
+    }
+  });
+
+  // Register existing recording toggle shortcut (if not already defined elsewhere)
+  globalShortcut.register('CommandOrControl+Shift+9', () => {
+    console.log('Keyboard shortcut for recording toggle triggered');
+    toggleRecording();
+  });
+}
+
+// Function to unregister global shortcuts
+function unregisterGlobalShortcuts() {
+  globalShortcut.unregisterAll();
+}
+
 // Create window when app is ready
 app.whenReady().then(() => {
   // Set up system capabilities (screen recording permissions)
@@ -566,12 +604,9 @@ app.whenReady().then(() => {
   // Initialize save path
   initializeSavePath();
   
-  // Register global shortcut
-  globalShortcut.register('CommandOrControl+Shift+9', () => {
-    console.log('Global hotkey triggered');
-    toggleRecording();
-  });
-
+  // Register global shortcuts when app is ready
+  registerGlobalShortcuts();
+  
   // Handle IPC ping message from renderer
   ipcMain.on('ping', () => {
     console.log('ping received in main process');
@@ -1199,9 +1234,12 @@ app.whenReady().then(() => {
   });
 });
 
-// Unregister all shortcuts when app is about to quit
+// Clean up on app quit
 app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
+  // Unregister all shortcuts when quitting
+  unregisterGlobalShortcuts();
+  
+  // ... any existing cleanup code ...
 });
 
 // Quit when all windows are closed, except on macOS
@@ -1245,42 +1283,47 @@ function createOrShowFloatingPanel() {
 // Add these IPC handlers for panel communication
 // Handle zoom level update from renderer
 ipcMain.on('zoom-level-update', (event, level) => {
-  console.log('Received zoom level update:', level);
-  // Forward to panel window if it exists
+  console.log('Received zoom level update from renderer:', level);
+  
+  // Forward to floating panel if it exists
   if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
     floatingPanelWindow.webContents.send('update-zoom-level', level);
   }
 });
 
 // Handle panel zoom in command
-ipcMain.on('panel-zoom-in', (event) => {
-  console.log('Received panel zoom in command');
+ipcMain.on('panel-zoom-in', () => {
+  console.log('Received zoom-in from panel');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('zoom-in');
   }
 });
 
 // Handle panel zoom out command
-ipcMain.on('panel-zoom-out', (event) => {
-  console.log('Received panel zoom out command');
+ipcMain.on('panel-zoom-out', () => {
+  console.log('Received zoom-out from panel');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('zoom-out');
   }
 });
 
 // Handle panel toggle PiP command
-ipcMain.on('panel-toggle-pip', (event) => {
-  console.log('Received panel toggle PiP command');
+ipcMain.on('panel-toggle-pip', () => {
+  console.log('Received toggle-pip from panel');
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('toggle-pip');
   }
 });
 
 // Handle panel collapse command
-ipcMain.on('panel-collapse', (event) => {
-  console.log('Received panel collapse command');
+ipcMain.on('panel-collapse', () => {
+  console.log('Received collapse from panel');
   if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    // For now, just minimize the panel
-    floatingPanelWindow.minimize();
+    // Toggle between normal and minimized state
+    if (floatingPanelWindow.isMinimized()) {
+      floatingPanelWindow.restore();
+    } else {
+      floatingPanelWindow.minimize();
+    }
   }
 }); 
