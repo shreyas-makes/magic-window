@@ -589,11 +589,19 @@ function registerGlobalShortcuts() {
       if (mainWindow) mainWindow.webContents.send('zoom-preset', { preset: 4.0 });
     });
     
-    // Register Cmd+0/Ctrl+0 for toggling PiP
-    globalShortcut.register('CommandOrControl+0', () => {
-      console.log('Cmd+0 pressed (toggle PiP)');
-      if (mainWindow) mainWindow.webContents.send('toggle-pip');
+    // Add shortcut to toggle PiP
+    const togglePipResult = globalShortcut.register('CommandOrControl+0', () => {
+      console.log('Global shortcut: Cmd+0 pressed - toggling PiP');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('toggle-pip');
+      }
     });
+    
+    if (togglePipResult) {
+      console.log('Registered Cmd+0 shortcut for toggling PiP');
+    } else {
+      console.error('Failed to register Cmd+0 shortcut');
+    }
     
     console.log('Global shortcuts registered');
   } catch (err) {
@@ -1359,8 +1367,11 @@ function setupIpcHandlers() {
   
   // Relay panel-toggle-pip from panel to renderer
   ipcMain.on('panel-toggle-pip', () => {
+    console.log('Received panel-toggle-pip message, forwarding to main window');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('toggle-pip');
+    } else {
+      console.warn('Cannot forward toggle-pip: main window not available');
     }
   });
   

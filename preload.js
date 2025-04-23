@@ -6,7 +6,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Send a message to the main process
   send: (channel, data) => {
     // Only allow certain channels to be sent
-    let validChannels = ['ping', 'sourceSelected', 'startRecording', 'stopRecording', 'open-file', 'pauseRecording', 'resumeRecording', 'startCanvasRecording', 'sendBlobChunk', 'zoom-level-update'];
+    let validChannels = [
+      'ping', 
+      'sourceSelected', 
+      'startRecording', 
+      'stopRecording', 
+      'open-file', 
+      'pauseRecording', 
+      'resumeRecording', 
+      'startCanvasRecording', 
+      'sendBlobChunk', 
+      'zoom-level-update',
+      'pip-frame-update',
+      'pip-state-update',
+      'video-size-update',
+      'zoom-state-update'
+    ];
     if (validChannels.includes(channel)) {
       console.log('Sending IPC message:', channel);
       ipcRenderer.send(channel, data);
@@ -17,7 +32,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Register handler for IPC events from main process
   on: (channel, func) => {
     // Only allow certain channels to be received
-    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus', 'recordingLimitReached', 'zoom-in', 'zoom-out', 'toggle-pip'];
+    let validChannels = [
+      'pong', 
+      'updateState', 
+      'recordingError', 
+      'recordingSaved', 
+      'recordingMimeType', 
+      'hotkey-start-recording', 
+      'diskSpaceWarning', 
+      'concatenationStatus', 
+      'recordingLimitReached', 
+      'zoom-in', 
+      'zoom-out', 
+      'toggle-pip',
+      'set-zoom-center',
+      'zoom-preset'
+    ];
     if (validChannels.includes(channel)) {
       console.log('Registering handler for channel:', channel);
       
@@ -162,5 +192,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onSetZoomCenter: (callback) => {
     console.log('Registering handler for channel: set-zoom-center');
     ipcRenderer.on('set-zoom-center', (event, coords) => callback(coords));
+  },
+  onZoomPreset: (callback) => {
+    console.log('Registering handler for channel: zoom-preset');
+    ipcRenderer.on('zoom-preset', (event, data) => callback(data));
   }
 }); 

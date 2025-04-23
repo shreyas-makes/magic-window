@@ -15,6 +15,9 @@ let pipApp = null; // PIXI application
 let pipTexture = null; // PIXI texture for the video snapshot
 let pipSprite = null; // PIXI sprite for the video
 let zoomRectGraphics = null; // PIXI graphics for the zoom rectangle
+let pipContext = null; // Canvas 2D context (fallback)
+let pipImage = null; // For Canvas 2D fallback
+let usePixi = false; // Flag to indicate if we're using PIXI.js
 let videoWidth = 3840;
 let videoHeight = 2160;
 let zoomState = {
@@ -25,9 +28,34 @@ let zoomState = {
     canvasHeight: 2160
 };
 
+// Set initial display state for pipContainer
+pipContainer.style.display = 'none';
+
+// Initialize Canvas 2D context as fallback
+function initializeCanvas2D() {
+    console.log('Initializing Canvas 2D for PiP');
+    pipContext = pipCanvas.getContext('2d');
+    pipCanvas.width = 210;
+    pipCanvas.height = 118;
+    
+    // Draw initial gray background
+    pipContext.fillStyle = '#222';
+    pipContext.fillRect(0, 0, pipCanvas.width, pipCanvas.height);
+    pipContext.fillStyle = '#555';
+    pipContext.font = '12px Arial';
+    pipContext.textAlign = 'center';
+    pipContext.fillText('Waiting for snapshot...', pipCanvas.width / 2, pipCanvas.height / 2);
+    
+    usePixi = false;
+}
+
 // Initialize PiP canvas with PIXI.js
-function initializePipCanvas() {
+function initializePixiCanvas() {
     try {
+        if (typeof PIXI === 'undefined') {
+            throw new Error('PIXI.js not loaded');
+        }
+        
         // Create PIXI application
         pipApp = new PIXI.Application({
             width: 210,
@@ -53,14 +81,17 @@ function initializePipCanvas() {
         updateZoomRectangle();
         
         console.log('PiP canvas initialized with PIXI.js');
+        usePixi = true;
     } catch (error) {
         console.error('Error initializing PIXI.js for PiP:', error);
-        fallbackToCanvas2D();
+        initializeCanvas2D();
     }
 }
 
 // Create initial texture with a placeholder
 function createInitialTexture() {
+    if (!usePixi || !pipApp) return;
+    
     try {
         // Create a graphics object for initial placeholder
         const graphics = new PIXI.Graphics();
@@ -95,22 +126,6 @@ function createInitialTexture() {
     }
 }
 
-// Fallback to Canvas 2D if PIXI.js fails
-function fallbackToCanvas2D() {
-    console.log('Falling back to Canvas 2D rendering for PiP');
-    pipContext = pipCanvas.getContext('2d');
-    pipCanvas.width = 210;
-    pipCanvas.height = 118;
-    
-    // Draw initial gray background
-    pipContext.fillStyle = '#222';
-    pipContext.fillRect(0, 0, pipCanvas.width, pipCanvas.height);
-    pipContext.fillStyle = '#555';
-    pipContext.font = '12px Arial';
-    pipContext.textAlign = 'center';
-    pipContext.fillText('Waiting for snapshot...', pipCanvas.width / 2, pipCanvas.height / 2);
-}
-
 // Format zoom level for display
 function formatZoomLevel(level) {
     return `${level.toFixed(1)}x`;
@@ -125,16 +140,29 @@ function updateZoomLevelDisplay(level) {
 
 // Update PiP button state
 function updatePipState(isActive) {
+    console.log('Updating PiP state to:', isActive);
     isPipActive = isActive;
     togglePipButton.style.backgroundColor = isActive ? '#4CAF50' : '#555';
     pipContainer.style.display = isActive ? 'block' : 'none';
+    
+    // Log the actual display style after setting it
+    console.log('PiP container display style is now:', pipContainer.style.display);
+    
+    if (isActive) {
+        // Initialize PiP canvas if needed when becoming active
+        if (!usePixi && !pipContext) {
+            initializeCanvas2D();
+        } else if (usePixi && !pipApp) {
+            initializePixiCanvas();
+        }
+    }
 }
 
 // Update zoom rectangle based on current zoom state
 function updateZoomRectangle() {
     if (!isPipActive) return;
     
-    if (pipApp && zoomRectGraphics) {
+    if (usePixi && pipApp && zoomRectGraphics) {
         // PIXI.js implementation
         try {
             // Clear previous rectangle
@@ -200,45 +228,55 @@ function updateZoomRectangle() {
 function displayPipFrame(dataURL) {
     if (!isPipActive) return;
     
-    if (pipApp && pipApp.stage) {
+    if (usePixi && pipApp && pipApp.stage) {
         // PIXI.js implementation
         try {
-            // Create or update texture
-            if (pipTexture) {
-                // Update existing texture
-                PIXI.Texture.fromURL(dataURL).then(newTexture => {
-                    pipTexture.baseTexture = newTexture.baseTexture;
-                    pipTexture.update();
-                });
-            } else {
-                // Create new texture
-                PIXI.Texture.fromURL(dataURL).then(newTexture => {
-                    pipTexture = newTexture;
-                    
-                    // Remove placeholder sprite if it exists
-                    if (pipSprite) {
-                        pipApp.stage.removeChild(pipSprite);
+            // Create or update texture with plain Image approach instead of PIXI.Texture.fromURL
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    if (!pipTexture) {
+                        // Create new texture from the loaded image
+                        pipTexture = PIXI.Texture.from(img);
+                        
+                        // Remove placeholder sprite if it exists
+                        if (pipSprite) {
+                            pipApp.stage.removeChild(pipSprite);
+                        }
+                        
+                        // Create sprite from texture
+                        pipSprite = new PIXI.Sprite(pipTexture);
+                        pipSprite.width = pipCanvas.width;
+                        pipSprite.height = pipCanvas.height;
+                        pipApp.stage.addChild(pipSprite);
+                        
+                        // Add zoom rectangle on top
+                        pipApp.stage.addChild(zoomRectGraphics);
+                    } else {
+                        // Update existing texture
+                        const baseTexture = PIXI.BaseTexture.from(img);
+                        pipTexture.baseTexture = baseTexture;
+                        pipTexture.update();
                     }
-                    
-                    // Create sprite from texture
-                    pipSprite = new PIXI.Sprite(pipTexture);
-                    pipSprite.width = pipCanvas.width;
-                    pipSprite.height = pipCanvas.height;
-                    pipApp.stage.addChild(pipSprite);
-                    
-                    // Add zoom rectangle on top
-                    pipApp.stage.addChild(zoomRectGraphics);
                     
                     // Update zoom rectangle
                     updateZoomRectangle();
-                });
-            }
+                } catch (err) {
+                    console.error('Error updating PIXI texture:', err);
+                    // Fall back to Canvas2D if PIXI texture handling fails
+                    usePixi = false;
+                    initializeCanvas2D();
+                    displayPipFrameCanvas2D(dataURL);
+                }
+            };
+            img.src = dataURL;
         } catch (error) {
             console.error('Error displaying frame with PIXI.js:', error);
-            fallbackToCanvas2D();
+            usePixi = false;
+            initializeCanvas2D();
             displayPipFrameCanvas2D(dataURL);
         }
-    } else if (pipContext) {
+    } else {
         // Canvas 2D implementation (fallback)
         displayPipFrameCanvas2D(dataURL);
     }
@@ -371,26 +409,42 @@ window.panelAPI.onZoomStateUpdate((newZoomState) => {
     handleZoomStateUpdate(newZoomState);
 });
 
-// Initialize
+// Initialize - start with Canvas2D for reliability
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Panel DOM loaded');
-    // Load PIXI.js from CDN if not already loaded
-    if (typeof PIXI === 'undefined') {
-        console.log('Loading PIXI.js from CDN');
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/pixi.js@5.3.7/dist/pixi.min.js';
-        script.onload = () => {
-            console.log('PIXI.js loaded');
-            initializePipCanvas();
+    
+    // First initialize with Canvas2D for reliability
+    initializeCanvas2D();
+    
+    // Then try to load PIXI.js
+    try {
+        // Load PIXI.js from CDN
+        const pixiScript = document.createElement('script');
+        pixiScript.src = 'https://cdn.jsdelivr.net/npm/pixi.js@6.5.8/dist/browser/pixi.min.js';
+        pixiScript.onload = () => {
+            console.log('PIXI.js loaded successfully');
+            // Wait a bit to make sure PIXI is fully initialized
+            setTimeout(() => {
+                try {
+                    if (typeof PIXI !== 'undefined') {
+                        console.log('PIXI is defined, version:', PIXI.VERSION);
+                        initializePixiCanvas();
+                    } else {
+                        console.warn('PIXI is not defined after script load');
+                    }
+                } catch (err) {
+                    console.error('Error initializing PIXI after load:', err);
+                }
+            }, 100);
         };
-        script.onerror = () => {
-            console.error('Failed to load PIXI.js');
-            fallbackToCanvas2D();
+        pixiScript.onerror = (err) => {
+            console.error('Failed to load PIXI.js:', err);
+            // Already using Canvas2D
         };
-        document.head.appendChild(script);
-    } else {
-        console.log('PIXI.js already loaded');
-        initializePipCanvas();
+        document.head.appendChild(pixiScript);
+    } catch (err) {
+        console.error('Error loading PIXI.js:', err);
+        // Already using Canvas2D
     }
     
     updateZoomLevelDisplay(currentZoomLevel);

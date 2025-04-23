@@ -44,6 +44,7 @@ let currentPresetIndex = 0;
 let isPipVisible = false;
 let lastPipUpdateTime = 0;
 const PIP_UPDATE_INTERVAL = 250; // Update PiP every 250ms
+let pipSnapshotInterval = null;
 
 // Function to format seconds as HH:MM:SS
 function formatTime(seconds) {
@@ -232,6 +233,11 @@ function initializePixi() {
     
     // Try to initialize PIXI
     try {
+      // First check if PIXI is actually available
+      if (typeof PIXI === 'undefined') {
+        throw new Error('PIXI is not defined. Library may not be loaded.');
+      }
+      
       // Create a new PIXI Application with compatibility options
       const options = {
         view: canvasElement,
@@ -405,6 +411,14 @@ function initializeCanvas2DRenderingLoop() {
           // canvasContext.strokeStyle = 'red';
           // canvasContext.lineWidth = 4;
           // canvasContext.strokeRect(0, 0, canvasWidth, canvasHeight);
+          
+          // Send PiP snapshots if enabled (don't use interval in Canvas2D mode)
+          if (isPipVisible && !pipSnapshotInterval) {
+            // Only send snapshot occasionally to avoid overloading
+            if (Math.random() < 0.05) { // roughly every 20 frames at 60fps
+              sendPipSnapshot();
+            }
+          }
         }
       } catch (err) {
         console.error("Error rendering video to canvas:", err);
@@ -1050,58 +1064,70 @@ function setupCanvasRendering(stream) {
 
 // Function to smoothly transition zoom and position
 function setZoom(level, centerX, centerY, duration = 0.3) {
-    // Constrain zoom level
-    level = Math.max(1.0, Math.min(level, 4.0));
-    
-    // Update target values
-    state.targetZoom = level;
-    state.targetCenterX = centerX !== undefined ? centerX : state.currentCenterX;
-    state.targetCenterY = centerY !== undefined ? centerY : state.currentCenterY;
-    
-    // Animate the zoom change
-    if (usePixi && videoSprite) {
-        // Use GSAP for smooth animation
-        gsap.to(state, {
-            currentZoom: state.targetZoom,
-            currentCenterX: state.targetCenterX,
-            currentCenterY: state.targetCenterY,
-            duration: duration,
-            ease: "power2.out",
-            onUpdate: () => {
-                // Update sprite scale and position based on current values
-                videoSprite.scale.set(state.currentZoom);
-                
-                // Calculate position to keep the center point fixed
-                const viewportWidth = app.renderer.width;
-                const viewportHeight = app.renderer.height;
-                
-                // Center of the sprite in the viewport
-                videoSprite.x = viewportWidth / 2 - (state.currentCenterX * state.currentZoom);
-                videoSprite.y = viewportHeight / 2 - (state.currentCenterY * state.currentZoom);
-            },
-            onComplete: () => {
-                // Send zoom level update to main process for floating panel
-                window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
-                
-                // Send zoom state update for PiP
+    try {
+        // Constrain zoom level
+        level = Math.max(1.0, Math.min(level, 4.0));
+        
+        // Update target values
+        state.targetZoom = level;
+        state.targetCenterX = centerX !== undefined ? centerX : state.currentCenterX;
+        state.targetCenterY = centerY !== undefined ? centerY : state.currentCenterY;
+        
+        console.log(`Setting zoom: level=${level}, center=(${state.targetCenterX}, ${state.targetCenterY})`);
+        
+        // Animate the zoom change
+        if (usePixi && videoSprite && app) {
+            // Use GSAP for smooth animation
+            gsap.to(state, {
+                currentZoom: state.targetZoom,
+                currentCenterX: state.targetCenterX,
+                currentCenterY: state.targetCenterY,
+                duration: duration,
+                ease: "power2.out",
+                onUpdate: () => {
+                    // Update sprite scale and position based on current values
+                    videoSprite.scale.set(state.currentZoom);
+                    
+                    // Calculate position to keep the center point fixed
+                    const viewportWidth = app.renderer.width;
+                    const viewportHeight = app.renderer.height;
+                    
+                    // Center of the sprite in the viewport
+                    videoSprite.x = viewportWidth / 2 - (state.currentCenterX * state.currentZoom);
+                    videoSprite.y = viewportHeight / 2 - (state.currentCenterY * state.currentZoom);
+                },
+                onComplete: () => {
+                    // Send zoom level update to main process for floating panel
+                    window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
+                    
+                    // Send zoom state update for PiP
+                    sendZoomStateUpdate();
+                }
+            });
+        } else if (canvasContext) {
+            // For Canvas2D fallback, just update immediately
+            state.currentZoom = state.targetZoom;
+            state.currentCenterX = state.targetCenterX;
+            state.currentCenterY = state.targetCenterY;
+            
+            // Send zoom level update to main process for floating panel
+            window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
+            
+            // Send zoom state update for PiP
+            try {
                 sendZoomStateUpdate();
+            } catch (err) {
+                console.error('Error sending zoom state update:', err);
             }
-        });
-    } else if (canvas && canvasContext) {
-        // For Canvas2D fallback, just update immediately
-        state.currentZoom = state.targetZoom;
-        state.currentCenterX = state.targetCenterX;
-        state.currentCenterY = state.targetCenterY;
+        } else {
+            console.warn('Cannot set zoom: Neither PIXI nor Canvas2D context is available');
+        }
         
-        // Send zoom level update to main process for floating panel
-        window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
-        
-        // Send zoom state update for PiP
-        sendZoomStateUpdate();
+        // Update current preset index
+        currentPresetIndex = findClosestPresetIndex(level);
+    } catch (error) {
+        console.error('Error in setZoom:', error);
     }
-    
-    // Update current preset index
-    currentPresetIndex = findClosestPresetIndex(level);
 }
 
 // Function to toggle FXAA
@@ -1816,6 +1842,30 @@ window.addEventListener('DOMContentLoaded', async () => {
     addDirectCaptureButton();
   }
   
+  // Initialize zoom controls
+  initializeZoomControls();
+  
+  // Set up PiP and zoom event listeners
+  window.electronAPI.onTogglePip(() => {
+    console.log('Toggle PiP command received from main process');
+    togglePip();
+  });
+  
+  window.electronAPI.onSetZoomCenter((coords) => {
+    console.log('Set zoom center command received:', coords);
+    if (coords && typeof coords.x === 'number' && typeof coords.y === 'number') {
+      setZoom(state.currentZoom, coords.x, coords.y);
+    }
+  });
+  
+  // Add listener for zoom presets
+  window.electronAPI.onZoomPreset && window.electronAPI.onZoomPreset((data) => {
+    console.log('Zoom preset received:', data);
+    if (data && typeof data.preset === 'number') {
+      setZoom(data.preset, undefined, undefined);
+    }
+  });
+  
   // Test initial communication
   statusEl.textContent = 'Sending ping to main process...';
   statusEl.className = 'status pending';
@@ -2081,9 +2131,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     recordingMessageEl.appendChild(document.createElement('br'));
     recordingMessageEl.appendChild(openButton);
   });
-
-  // Initialize zoom control event handlers
-  initializeZoomControls();
 });
 
 // Function to initialize zoom control buttons
@@ -2278,103 +2325,117 @@ window.electronAPI.on('zoom-out', () => {
 
 window.electronAPI.on('toggle-pip', () => {
     console.log('Received toggle-pip command from panel');
-    // To be implemented in future
-    console.log("Toggle PiP received");
+    togglePip();
 });
 
 // Add togglePip function
 function togglePip() {
-    isPipVisible = !isPipVisible;
-    console.log(`PiP visibility toggled: ${isPipVisible}`);
-    
-    // Send state update to main process
-    window.electronAPI.sendPipStateUpdate(isPipVisible);
-    
-    // If PiP is now visible, send an immediate frame
-    if (isPipVisible && sourceVideo) {
-        sendPipSnapshot();
+    try {
+        console.log('Current PiP visibility before toggle:', isPipVisible);
+        isPipVisible = !isPipVisible;
+        console.log('New PiP visibility after toggle:', isPipVisible);
         
-        // Also send video dimensions
-        const videoWidth = sourceVideo.videoWidth || 3840;
-        const videoHeight = sourceVideo.videoHeight || 2160;
-        window.electronAPI.sendVideoSizeUpdate(videoWidth, videoHeight);
+        // Send PiP state update to main process
+        window.electronAPI.sendPipStateUpdate(isPipVisible);
+        console.log('Sent PiP state update to main process:', isPipVisible);
+        
+        // Start or stop sending PiP snapshots based on visibility
+        if (isPipVisible) {
+            // Send an immediate snapshot
+            sendPipSnapshot();
+            console.log('Sent initial PiP snapshot');
+            
+            // Set up an interval to send snapshots regularly
+            if (!pipSnapshotInterval) {
+                console.log('Setting up PiP snapshot interval');
+                pipSnapshotInterval = setInterval(sendPipSnapshot, PIP_UPDATE_INTERVAL);
+            }
+        } else {
+            // Clear the snapshot interval if PiP is hidden
+            if (pipSnapshotInterval) {
+                console.log('Clearing PiP snapshot interval');
+                clearInterval(pipSnapshotInterval);
+                pipSnapshotInterval = null;
+            }
+        }
+    } catch (err) {
+        console.error('Error toggling PiP:', err);
     }
 }
 
 // Function to create and send a snapshot for PiP
 function sendPipSnapshot() {
-    if (!isPipVisible || !sourceVideo || !sourceVideo.videoWidth) return;
-    
-    // Throttle updates to avoid excessive communication
-    const now = Date.now();
-    if (now - lastPipUpdateTime < PIP_UPDATE_INTERVAL) return;
-    lastPipUpdateTime = now;
+    if (!isPipVisible || !sourceVideo) return;
     
     try {
-        // Create a small offscreen canvas for the snapshot
+        // Throttle updates to reduce performance impact
+        const now = performance.now();
+        if (now - lastPipUpdateTime < PIP_UPDATE_INTERVAL) return;
+        lastPipUpdateTime = now;
+        
+        // Create an offscreen canvas
         const offscreenCanvas = document.createElement('canvas');
-        
-        // Set to a small size for efficiency (should match PiP canvas size)
-        offscreenCanvas.width = 210;
-        offscreenCanvas.height = 118;
-        
-        // Get context and draw the original unzoomed video frame
         const ctx = offscreenCanvas.getContext('2d');
+        if (!ctx) {
+            console.error('Could not get 2D context for offscreen canvas');
+            return;
+        }
         
-        // Draw the source video (unzoomed) to fit the offscreen canvas
+        // Set canvas size to a small size for efficiency (maintain aspect ratio)
+        const aspectRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
+        offscreenCanvas.width = 210; // Match the PiP canvas width in panel.html
+        offscreenCanvas.height = Math.round(offscreenCanvas.width / aspectRatio);
+        
+        // Draw the video frame to the canvas (unzoomed)
         ctx.drawImage(sourceVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
         
-        // Convert to data URL and send to main process
-        const dataURL = offscreenCanvas.toDataURL('image/jpeg', 0.7); // Use lower quality for better performance
+        // Convert to data URL (JPEG for better performance)
+        const dataURL = offscreenCanvas.toDataURL('image/jpeg', 0.7);
+        
+        // Send the data URL to the main process
         window.electronAPI.sendPipFrameUpdate(dataURL);
-    } catch (error) {
-        console.error('Error creating PiP snapshot:', error);
-    }
-}
-
-// Modify Canvas2D render function to include PiP snapshot sending
-function initializeCanvas2DRenderingLoop() {
-    // ... existing code ...
-    
-    function render() {
-        // ... existing canvas rendering code ...
         
-        // Add PiP snapshot sending at the end of the render function
-        sendPipSnapshot();
-        
-        // ... continue with the rest of the render function ...
+        // Also send the current zoom state
+        sendZoomStateUpdate();
+    } catch (err) {
+        console.error('Error creating PiP snapshot:', err);
     }
-    
-    // ... rest of the function ...
 }
 
 // Function to send current zoom state to the panel
 function sendZoomStateUpdate() {
     if (!isPipVisible) return;
     
-    const zoomState = {
-        zoom: state.currentZoom,
-        centerX: state.currentCenterX,
-        centerY: state.currentCenterY,
-        canvasWidth: app ? app.renderer.width : canvas.width,
-        canvasHeight: app ? app.renderer.height : canvas.height
-    };
-    
-    window.electronAPI.sendZoomStateUpdate(zoomState);
-    
-    // Also send video dimensions if we have a source video
-    if (sourceVideo) {
-        window.electronAPI.sendVideoSizeUpdate(sourceVideo.videoWidth, sourceVideo.videoHeight);
+    try {
+        // Get canvas dimensions in a safe way
+        let canvasWidth = 3840;  // Default to 4K width
+        let canvasHeight = 2160; // Default to 4K height
+        
+        if (app) {
+            // PIXI rendering mode
+            canvasWidth = app.renderer.width;
+            canvasHeight = app.renderer.height;
+        } else if (canvasContext && canvasContext.canvas) {
+            // Canvas2D rendering mode
+            canvasWidth = canvasContext.canvas.width;
+            canvasHeight = canvasContext.canvas.height;
+        }
+        
+        const zoomState = {
+            zoom: state.currentZoom,
+            centerX: state.currentCenterX,
+            centerY: state.currentCenterY,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight
+        };
+        
+        window.electronAPI.sendZoomStateUpdate(zoomState);
+        
+        // Also send video dimensions if we have a source video
+        if (sourceVideo) {
+            window.electronAPI.sendVideoSizeUpdate(sourceVideo.videoWidth, sourceVideo.videoHeight);
+        }
+    } catch (err) {
+        console.error('Error sending zoom state update:', err);
     }
 }
-
-// Initialize event listeners for PiP functionality
-window.electronAPI.onTogglePip(() => {
-    console.log('Toggle PiP command received from main process');
-    togglePip();
-});
-
-window.electronAPI.onSetZoomCenter((coords) => {
-    console.log('Set zoom center command received:', coords);
-    setZoom(state.currentZoom, coords.x, coords.y);
-});
