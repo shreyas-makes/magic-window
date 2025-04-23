@@ -33,32 +33,62 @@ const BORDER_COLORS = [0xFF5F1F, 0xFF1F8E, 0x8A2BE2]; // Orange/coral â†’ pink â
 let borderPulseTime = 0; // Time counter for pulsing animation
 let lastFrameTime = 0; // For animation timing
 
+// Debugging flag
+const DEBUG_PIP = true;
+
+// Debugging function
+function debugLog(message, isForced = false) {
+    if (DEBUG_PIP || isForced) {
+        console.log(`[PiP Debug] ${message}`);
+    }
+}
+
 // Set initial display state for pipContainer
 pipContainer.style.display = 'none';
+debugLog('PiP container initially hidden');
 
 // Initialize Canvas 2D context as fallback
 function initializeCanvas2D() {
-    console.log('Initializing Canvas 2D for PiP');
-    pipContext = pipCanvas.getContext('2d');
-    pipCanvas.width = 210;
-    pipCanvas.height = 118;
-    
-    // Draw initial gray background
-    pipContext.fillStyle = '#222';
-    pipContext.fillRect(0, 0, pipCanvas.width, pipCanvas.height);
-    pipContext.fillStyle = '#555';
-    pipContext.font = '12px Arial';
-    pipContext.textAlign = 'center';
-    pipContext.fillText('Waiting for snapshot...', pipCanvas.width / 2, pipCanvas.height / 2);
-    
-    usePixi = false;
+    debugLog('Initializing Canvas 2D for PiP');
+    try {
+        pipContext = pipCanvas.getContext('2d', { alpha: false });
+        if (!pipContext) {
+            console.error('Failed to get 2D context with alpha:false, trying default');
+            pipContext = pipCanvas.getContext('2d');
+        }
+        
+        if (!pipContext) {
+            console.error('CRITICAL: Failed to get any 2D context for PiP canvas');
+            return false;
+        }
+        
+        pipCanvas.width = 210;
+        pipCanvas.height = 118;
+        
+        // Draw initial gray background
+        pipContext.fillStyle = '#222';
+        pipContext.fillRect(0, 0, pipCanvas.width, pipCanvas.height);
+        pipContext.fillStyle = '#555';
+        pipContext.font = '12px Arial';
+        pipContext.textAlign = 'center';
+        pipContext.fillText('Waiting for snapshot...', pipCanvas.width / 2, pipCanvas.height / 2);
+        
+        usePixi = false;
+        debugLog('Canvas 2D initialized successfully');
+        return true;
+    } catch (err) {
+        console.error('Error initializing Canvas 2D:', err);
+        return false;
+    }
 }
 
 // Initialize PiP canvas with PIXI.js
 function initializePixiCanvas() {
+    debugLog('Attempting to initialize PIXI.js for PiP');
     try {
         if (typeof PIXI === 'undefined') {
-            throw new Error('PIXI.js not loaded');
+            console.error('PIXI.js not loaded, falling back to Canvas 2D');
+            return initializeCanvas2D();
         }
         
         // Create PIXI application
@@ -70,6 +100,11 @@ function initializePixiCanvas() {
             resolution: window.devicePixelRatio || 1,
             autoDensity: true
         });
+        
+        if (!pipApp || !pipApp.view) {
+            console.error('Failed to create PIXI Application, falling back to Canvas 2D');
+            return initializeCanvas2D();
+        }
         
         // Create container for our elements
         const container = new PIXI.Container();
@@ -85,17 +120,18 @@ function initializePixiCanvas() {
         // Draw initial zoom rectangle
         updateZoomRectangle();
         
-        console.log('PiP canvas initialized with PIXI.js');
+        debugLog('PiP canvas initialized with PIXI.js');
         usePixi = true;
+        return true;
     } catch (error) {
         console.error('Error initializing PIXI.js for PiP:', error);
-        initializeCanvas2D();
+        return initializeCanvas2D();
     }
 }
 
 // Create initial texture with a placeholder
 function createInitialTexture() {
-    if (!usePixi || !pipApp) return;
+    if (!usePixi || !pipApp) return false;
     
     try {
         // Create a graphics object for initial placeholder
@@ -126,8 +162,12 @@ function createInitialTexture() {
         // Create sprite from the render texture
         pipSprite = new PIXI.Sprite(renderTexture);
         pipApp.stage.addChild(pipSprite);
+        
+        debugLog('Initial texture created successfully');
+        return true;
     } catch (error) {
         console.error('Error creating initial texture:', error);
+        return false;
     }
 }
 
@@ -145,31 +185,45 @@ function updateZoomLevelDisplay(level) {
 
 // Update PiP button state
 function updatePipState(isActive) {
-    console.log('Updating PiP state to:', isActive);
+    debugLog(`Updating PiP state to: ${isActive}`, true);
     
     // Only update if state actually changed
     if (isPipActive !== isActive) {
         isPipActive = isActive;
+        
+        // Update the toggle button appearance
         togglePipButton.style.backgroundColor = isActive ? '#4CAF50' : '#555';
-        pipContainer.style.display = isActive ? 'block' : 'none';
+        togglePipButton.setAttribute('aria-pressed', isActive.toString());
+        
+        // Update pip container visibility
+        const newDisplayStyle = isActive ? 'block' : 'none';
+        if (pipContainer.style.display !== newDisplayStyle) {
+            pipContainer.style.display = newDisplayStyle;
+            debugLog(`PiP container display style set to: ${newDisplayStyle}`, true);
+            
+            // If showing, ensure we have a valid rendering context
+            if (isActive) {
+                // Ensure we have a rendering context
+                if (usePixi && pipApp) {
+                    debugLog('Using existing PIXI.js for PiP display');
+                } else if (usePixi) {
+                    debugLog('Initializing PIXI.js for newly active PiP');
+                    initializePixiCanvas();
+                } else {
+                    debugLog('Initializing Canvas2D for newly active PiP');
+                    initializeCanvas2D();
+                }
+            }
+        }
         
         // Force a reflow/redraw to ensure style changes apply immediately
         void pipContainer.offsetWidth;
         
         // Log the actual display style after setting it
-        console.log('PiP container display style is now:', pipContainer.style.display);
-        console.log('PiP container visibility check:', pipContainer.offsetWidth > 0 ? 'visible' : 'hidden');
-        
-        if (isActive) {
-            // Initialize PiP canvas if needed when becoming active
-            if (!usePixi && !pipContext) {
-                initializeCanvas2D();
-            } else if (usePixi && !pipApp) {
-                initializePixiCanvas();
-            }
-        }
+        debugLog(`PiP container display style is now: ${pipContainer.style.display}`, true);
+        debugLog(`PiP container visibility check: ${pipContainer.offsetWidth > 0 ? 'visible' : 'hidden'}`, true);
     } else {
-        console.log('PiP state unchanged, already:', isActive ? 'active' : 'inactive');
+        debugLog(`PiP state unchanged, already: ${isActive ? 'active' : 'inactive'}`);
     }
 }
 
@@ -381,66 +435,90 @@ function blendColorsRgba(color1, color2, ratio, alpha) {
 // Function to display a frame in the PiP window
 function displayPipFrame(dataURL) {
     // Validate and display the incoming PIP frame
-    console.log(`[${new Date().toISOString()}] PiP frame received: ${Math.round(dataURL?.length / 1024) || 0}KB`);
+    debugLog(`PiP frame received: ${Math.round(dataURL?.length / 1024) || 0}KB`);
   
     if (!dataURL) {
         console.error('Received empty dataURL for PiP frame');
-        return;
+        return false;
     }
     
     if (!dataURL || typeof dataURL !== 'string' || !dataURL.startsWith('data:image')) {
         console.warn('Invalid PiP frame data received');
-        return;
+        return false;
     }
     
     // Make sure PiP container is visible
     if (pipContainer.style.display !== 'block' && isPipActive) {
-        console.log('Ensuring PiP container is visible');
+        debugLog('Ensuring PiP container is visible', true);
         pipContainer.style.display = 'block';
+        
+        // Force a reflow/redraw
+        void pipContainer.offsetWidth;
     }
 
     try {
         if (usePixi && pipApp && pipSprite) {
             // PIXI.js implementation
-            // Create an image element to load the data URL
-            const img = new Image();
-            img.onload = () => {
-                try {
-                    // If we have an existing texture, destroy it
-                    if (pipTexture && pipTexture.baseTexture) {
-                        pipTexture.destroy(true);
-                    }
-                    
-                    // Create a new texture from the loaded image
-                    pipTexture = PIXI.Texture.from(img);
-                    
-                    // Update the sprite with the new texture
-                    pipSprite.texture = pipTexture;
-                    
-                    // Adjust sprite dimensions to fit the canvas
-                    pipSprite.width = pipCanvas.width;
-                    pipSprite.height = pipCanvas.height;
-                    
-                    // Redraw the zoom rectangle
-                    updateZoomRectangle();
-                    
-                    console.log('Updated PiP sprite with new frame');
-                } catch (err) {
-                    console.error('Error updating PiP texture:', err);
-                }
-            };
-            img.onerror = (err) => {
-                console.error('Error loading PiP image:', err);
-            };
-            img.src = dataURL;
+            debugLog('Using PIXI.js to display frame');
+            return displayPipFramePixi(dataURL);
         } else {
             // Canvas 2D fallback
-            displayPipFrameCanvas2D(dataURL);
+            debugLog('Using Canvas2D to display frame');
+            return displayPipFrameCanvas2D(dataURL);
         }
     } catch (error) {
         console.error('Error displaying PiP frame:', error);
         // Fall back to Canvas2D if PIXI fails
-        displayPipFrameCanvas2D(dataURL);
+        return displayPipFrameCanvas2D(dataURL);
+    }
+}
+
+// PIXI.js implementation for PiP frame display
+function displayPipFramePixi(dataURL) {
+    try {
+        // Create an image element to load the data URL
+        const img = new Image();
+        
+        img.onload = () => {
+            try {
+                // If we have an existing texture, destroy it
+                if (pipTexture && pipTexture.baseTexture) {
+                    pipTexture.destroy(true);
+                }
+                
+                // Create a new texture from the loaded image
+                pipTexture = PIXI.Texture.from(img);
+                
+                // Update the sprite with the new texture
+                pipSprite.texture = pipTexture;
+                
+                // Adjust sprite dimensions to fit the canvas
+                pipSprite.width = pipCanvas.width;
+                pipSprite.height = pipCanvas.height;
+                
+                // Redraw the zoom rectangle
+                updateZoomRectangle();
+                
+                debugLog('Updated PIXI.js PiP sprite with new frame');
+            } catch (err) {
+                console.error('Error updating PIXI.js PiP texture:', err);
+                
+                // Try falling back to Canvas2D
+                displayPipFrameCanvas2D(dataURL);
+            }
+        };
+        
+        img.onerror = (err) => {
+            console.error('Error loading PiP image for PIXI.js:', err);
+            // Fall back to Canvas2D
+            displayPipFrameCanvas2D(dataURL);
+        };
+        
+        img.src = dataURL;
+        return true;
+    } catch (error) {
+        console.error('Error in PIXI.js display function:', error);
+        return displayPipFrameCanvas2D(dataURL);
     }
 }
 
@@ -448,7 +526,11 @@ function displayPipFrame(dataURL) {
 function displayPipFrameCanvas2D(dataURL) {
     if (!pipContext) {
         // Initialize Canvas2D context if not already done
-        initializeCanvas2D();
+        debugLog('Canvas2D context not initialized, initializing now');
+        if (!initializeCanvas2D()) {
+            console.error('Failed to initialize Canvas2D for PiP');
+            return false;
+        }
     }
     
     try {
@@ -488,16 +570,22 @@ function displayPipFrameCanvas2D(dataURL) {
                     pipContext.strokeRect(rectX, rectY, rectWidth, rectHeight);
                 }
                 
-                console.log('Updated PiP canvas with new frame');
+                debugLog('Updated Canvas2D PiP with new frame');
             } catch (err) {
-                console.error('Error drawing PiP image to canvas:', err);
+                console.error('Error drawing PiP image to Canvas2D:', err);
             }
+        };
+        
+        pipImage.onerror = (err) => {
+            console.error('Error loading image in Canvas2D:', err);
         };
         
         // Load the image
         pipImage.src = dataURL;
+        return true;
     } catch (error) {
         console.error('Error in Canvas2D PiP frame display:', error);
+        return false;
     }
 }
 
@@ -591,34 +679,6 @@ pipCanvas.addEventListener('mouseleave', () => {
     isDraggingPip = false;
 });
 
-// Set up listeners for updates from main process
-window.panelAPI.onUpdateZoomLevel((level) => {
-    console.log('Received zoom level update:', level);
-    updateZoomLevelDisplay(level);
-});
-
-window.panelAPI.onUpdatePipState((isActive) => {
-    console.log('Received PiP state update:', isActive);
-    updatePipState(isActive);
-});
-
-window.panelAPI.onPipFrameUpdate((dataURL) => {
-    console.log('Received PiP frame update');
-    displayPipFrame(dataURL);
-});
-
-window.panelAPI.onVideoSizeUpdate((width, height) => {
-    console.log(`Received video size update: ${width}x${height}`);
-    videoWidth = width;
-    videoHeight = height;
-    updateZoomRectangle();
-});
-
-window.panelAPI.onZoomStateUpdate((newZoomState) => {
-    console.log('Received zoom state update');
-    handleZoomStateUpdate(newZoomState);
-});
-
 // Initialize - start with Canvas2D for reliability
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Panel DOM loaded');
@@ -657,6 +717,69 @@ document.addEventListener('DOMContentLoaded', () => {
         // Already using Canvas2D
     }
     
+    // Set initial UI state
     updateZoomLevelDisplay(currentZoomLevel);
+    
+    // Make sure we initialize PiP state properly
+    // Setting to false first to ensure a clean state
+    isPipActive = false;
     updatePipState(isPipActive);
-}); 
+    
+    // Register the panel API event handlers
+    registerPanelAPIHandlers();
+    
+    console.log('Panel initialization complete');
+});
+
+// Register the panel API event handlers
+function registerPanelAPIHandlers() {
+    debugLog('Registering panel API handlers');
+    
+    // Register zoom level updates from main process
+    window.panelAPI.onUpdateZoomLevel((level) => {
+        debugLog(`Received zoom level update: ${level}`);
+        updateZoomLevelDisplay(level);
+    });
+    
+    // Register PiP state updates from main process
+    window.panelAPI.onUpdatePipState((isActive) => {
+        debugLog(`Received PiP state update: ${isActive}`, true);
+        
+        // Force a visible update if state has changed
+        if (isPipActive !== isActive) {
+            updatePipState(isActive);
+        } else {
+            debugLog('PiP state unchanged, no update needed');
+        }
+    });
+    
+    // Register PiP frame updates from main process
+    window.panelAPI.onPipFrameUpdate((dataURL) => {
+        debugLog(`Received PiP frame update: ${Math.round(dataURL?.length / 1024) || 0}KB`);
+        
+        // Make sure the panel shows when we receive frames
+        if (!isPipActive) {
+            debugLog('Activating PiP state because frame was received', true);
+            updatePipState(true);
+        }
+        
+        // Display the frame
+        displayPipFrame(dataURL);
+    });
+    
+    // Register video size updates
+    window.panelAPI.onVideoSizeUpdate((width, height) => {
+        debugLog(`Received video size update: ${width}x${height}`);
+        videoWidth = width;
+        videoHeight = height;
+        updateZoomRectangle();
+    });
+    
+    // Register zoom state updates
+    window.panelAPI.onZoomStateUpdate((newZoomState) => {
+        debugLog(`Received zoom state update: zoom=${newZoomState.zoom}`);
+        handleZoomStateUpdate(newZoomState);
+    });
+    
+    debugLog('Panel API handlers registered');
+} 

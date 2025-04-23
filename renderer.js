@@ -211,6 +211,11 @@ function initializePixi() {
     
     // Get canvas element
     const canvasElement = document.getElementById('main-canvas');
+    if (!canvasElement) {
+      console.error('Canvas element not found during Pixi initialization');
+      throw new Error('Canvas element not found');
+    }
+    console.log('Canvas element found:', canvasElement);
     
     // Log WebGL capabilities for debugging
     logPixiInfo();
@@ -227,6 +232,11 @@ function initializePixi() {
       powerPreference: 'high-performance', // Request high performance GPU
       clearBeforeRender: true,
     });
+    
+    if (!app || !app.view) {
+      console.error('Failed to initialize PIXI application or view is null');
+      throw new Error('PIXI initialization failed');
+    }
     
     // Set ticker to request animation frame mode for better performance
     app.ticker.maxFPS = 60; // Limit to 60 FPS max
@@ -994,6 +1004,14 @@ function setupCanvasRendering(stream) {
           console.log('Video playback started');
           console.log('Video is playing:', !sourceVideo.paused);
           console.log('Video dimensions:', sourceVideo.videoWidth, sourceVideo.videoHeight);
+          
+          // Send a PiP snapshot once the video is playing if PiP is enabled
+          if (isPipVisible) {
+            console.log('Video is playing and PiP is visible, sending initial snapshot');
+            setTimeout(() => {
+              sendPipSnapshot();
+            }, 500);
+          }
         })
         .catch(err => {
           console.error('Error starting video playback:', err);
@@ -1042,14 +1060,32 @@ function setupCanvasRendering(stream) {
         // Choose the rendering method based on initialization
         if (usePixi) {
           setupPixiRendering()
-            .then(success => resolve(success))
+            .then(success => {
+              // Send a PiP snapshot once the rendering is set up if PiP is enabled
+              if (isPipVisible) {
+                console.log('Pixi rendering set up and PiP is visible, sending initial snapshot');
+                setTimeout(() => {
+                  sendPipSnapshot();
+                }, 500);
+              }
+              resolve(success);
+            })
             .catch(err => {
               console.error('Error setting up PIXI rendering:', err);
               // Fallback to Canvas 2D
               usePixi = false;
               console.log('Falling back to Canvas 2D rendering');
               setupCanvas2DRendering()
-                .then(success => resolve(success))
+                .then(success => {
+                  // Send a PiP snapshot once the rendering is set up if PiP is enabled
+                  if (isPipVisible) {
+                    console.log('Canvas2D rendering set up and PiP is visible, sending initial snapshot');
+                    setTimeout(() => {
+                      sendPipSnapshot();
+                    }, 500);
+                  }
+                  resolve(success);
+                })
                 .catch(canvas2dErr => {
                   console.error('Error setting up Canvas 2D rendering:', canvas2dErr);
                   resolve(false);
@@ -1058,7 +1094,16 @@ function setupCanvasRendering(stream) {
         } else {
           // Use Canvas 2D rendering
           setupCanvas2DRendering()
-            .then(success => resolve(success))
+            .then(success => {
+              // Send a PiP snapshot once the rendering is set up if PiP is enabled
+              if (isPipVisible) {
+                console.log('Canvas2D rendering set up and PiP is visible, sending initial snapshot');
+                setTimeout(() => {
+                  sendPipSnapshot();
+                }, 500);
+              }
+              resolve(success);
+            })
             .catch(err => {
               console.error('Error setting up Canvas 2D rendering:', err);
               resolve(false);
@@ -2568,6 +2613,7 @@ function togglePip() {
     
     // Update the PiP state in main process
     window.electronAPI.sendPipStateUpdate(isPipVisible);
+    console.log('Sent PiP state update to main process');
     
     if (isPipVisible) {
       console.log('PiP activated - setting up snapshot interval');
@@ -2580,7 +2626,9 @@ function togglePip() {
       
       // Send an immediate snapshot to initialize the display
       setTimeout(() => {
-        sendPipSnapshot();
+        console.log('Sending immediate PiP snapshot');
+        const result = sendPipSnapshot();
+        console.log('Initial PiP snapshot sent result:', result);
       }, 100);
       
       // Start regular updates with appropriate interval
@@ -2619,13 +2667,17 @@ function togglePip() {
 function sendPipSnapshot() {
   try {
     // Skip if PiP is not visible
-    if (!isPipVisible) return;
+    if (!isPipVisible) {
+      console.log('PiP not visible, skipping snapshot');
+      return false;
+    }
     
     // Throttle updates to improve performance
     const now = Date.now();
     const updateInterval = isRecording ? 750 : PIP_UPDATE_INTERVAL; // More aggressive throttling during recording
     if (now - lastPipUpdateTime < updateInterval) {
-      return;
+      console.log('Throttling PiP snapshot, too soon since last update');
+      return false;
     }
     
     lastPipUpdateTime = now;
@@ -2640,18 +2692,67 @@ function sendPipSnapshot() {
       return false;
     }
     
+    console.log('Canvas element found for snapshot, dimensions:', canvasElement.width, 'x', canvasElement.height);
+    
     // Make sure we have a valid source video
-    if (!sourceVideo || !sourceVideo.videoWidth || !sourceVideo.videoHeight) {
-      console.warn('Source video not ready for PiP snapshot');
-      return false;
+    if (!sourceVideo) {
+      sourceVideo = document.getElementById('source-video');
+      if (!sourceVideo) {
+        console.error('Source video element not found for PiP snapshot');
+        return false;
+      }
     }
+    
+    // Check if source video is ready
+    if (!sourceVideo.videoWidth || !sourceVideo.videoHeight) {
+      console.warn('Source video dimensions not available. Video readyState:', sourceVideo.readyState);
+      
+      // If video isn't ready but we have a direct reference to the element with content,
+      // try to use it directly
+      const visibleVideo = document.getElementById('source-video');
+      if (visibleVideo && visibleVideo.videoWidth && visibleVideo.videoHeight) {
+        console.log('Found visible source video element with dimensions:', visibleVideo.videoWidth, 'x', visibleVideo.videoHeight);
+        sourceVideo = visibleVideo;
+      } else if (visibleVideo && visibleVideo.srcObject) {
+        console.log('Found visible source video with srcObject, but no dimensions yet');
+        sourceVideo = visibleVideo;
+      } else {
+        console.warn('No valid source video found for PiP snapshot');
+        
+        // Create a test pattern instead
+        return sendTestPatternToPip(canvasElement.width, canvasElement.height);
+      }
+    }
+    
+    console.log('Source video ready, dimensions:', sourceVideo.videoWidth, 'x', sourceVideo.videoHeight);
     
     // Create a temporary canvas for the snapshot
     // Using a scaled-down version to improve performance
     const tempCanvas = document.createElement('canvas');
     const scale = isRecording ? 0.25 : 0.4; // Balance between performance and quality
-    tempCanvas.width = Math.floor(canvasElement.width * scale);
-    tempCanvas.height = Math.floor(canvasElement.height * scale);
+    
+    // Use source video dimensions if canvas dimensions are not available
+    let baseWidth = canvasElement.width;
+    let baseHeight = canvasElement.height;
+    
+    // If canvas dimensions are zero, try to use the source video dimensions
+    if (baseWidth === 0 || baseHeight === 0) {
+      if (sourceVideo.videoWidth && sourceVideo.videoHeight) {
+        baseWidth = sourceVideo.videoWidth;
+        baseHeight = sourceVideo.videoHeight;
+        console.log('Using source video dimensions for snapshot:', baseWidth, 'x', baseHeight);
+      } else {
+        // Fallback to default dimensions
+        baseWidth = 3840;
+        baseHeight = 2160;
+        console.log('Using default dimensions for snapshot:', baseWidth, 'x', baseHeight);
+      }
+    }
+    
+    tempCanvas.width = Math.floor(baseWidth * scale);
+    tempCanvas.height = Math.floor(baseHeight * scale);
+    
+    console.log('Created temp canvas for snapshot, dimensions:', tempCanvas.width, 'x', tempCanvas.height);
     
     // Get 2D context, falling back to standard options if creation fails
     let tempCtx;
@@ -2670,14 +2771,67 @@ function sendPipSnapshot() {
     }
     
     // Use a simpler approach - draw directly from source video for reliability
-    // This is less optimal but more reliable than using the main canvas
     try {
       // Fill with black background first
       tempCtx.fillStyle = '#000';
       tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
       
-      // Draw the video directly
-      tempCtx.drawImage(sourceVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+      let drawSucceeded = false;
+      
+      // Try multiple methods to get content for PiP, in order of preference:
+      
+      // 1. Try drawing from the main PIXI canvas first if it's available
+      if (usePixi && app && app.view) {
+        try {
+          console.log('Drawing from Pixi canvas to PiP snapshot');
+          tempCtx.drawImage(app.view, 0, 0, tempCanvas.width, tempCanvas.height);
+          
+          // Check if drawing succeeded by examining non-black pixels
+          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          const data = imageData.data;
+          
+          // Check a sample of pixels to see if canvas has content
+          for (let i = 0; i < data.length; i += 16) {
+            // If we find any non-black pixel, consider the drawing successful
+            if (data[i] > 5 || data[i+1] > 5 || data[i+2] > 5) {
+              drawSucceeded = true;
+              break;
+            }
+          }
+          
+          if (!drawSucceeded) {
+            console.warn('Drawing from Pixi canvas yielded a blank image, trying source video instead');
+          }
+        } catch (err) {
+          console.error('Failed to draw from Pixi canvas:', err);
+          drawSucceeded = false;
+        }
+      }
+      
+      // 2. If Pixi drawing failed or resulted in blank canvas, try drawing from source video
+      if (!drawSucceeded && sourceVideo) {
+        try {
+          console.log('Drawing from source video to PiP snapshot');
+          
+          // Check if source video has actual content
+          if (sourceVideo.videoWidth && sourceVideo.videoHeight) {
+            tempCtx.drawImage(sourceVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+            drawSucceeded = true;
+          } else {
+            console.warn('Source video has no dimensions (videoWidth/Height)');
+          }
+        } catch (err) {
+          console.error('Failed to draw from source video:', err);
+          drawSucceeded = false;
+        }
+      }
+      
+      // 3. If all above methods failed, generate a test pattern
+      if (!drawSucceeded) {
+        console.warn('All drawing methods failed, generating test pattern');
+        drawTestPattern(tempCtx, tempCanvas.width, tempCanvas.height);
+        drawSucceeded = true;
+      }
       
       // Overlay zoom rectangle if we're zoomed in
       if (state.currentZoom > 1.0) {
@@ -2710,6 +2864,7 @@ function sendPipSnapshot() {
       
       // Send to main process
       window.electronAPI.sendPipFrameUpdate(dataURL);
+      console.log('PiP snapshot sent to main process');
       
       return true;
     } catch (err) {
@@ -2719,6 +2874,108 @@ function sendPipSnapshot() {
   } catch (error) {
     console.error('Error sending PiP snapshot:', error);
     return false;
+  }
+}
+
+// Helper function to generate and send a test pattern for PiP
+function sendTestPatternToPip(width, height) {
+  try {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 210;  // Set appropriate dimensions for PiP
+    tempCanvas.height = 118;
+    
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return false;
+    
+    // Draw test pattern
+    drawTestPattern(tempCtx, tempCanvas.width, tempCanvas.height);
+    
+    // Convert to data URL
+    const dataURL = tempCanvas.toDataURL('image/jpeg', 0.8);
+    
+    // Send to main process
+    window.electronAPI.sendPipFrameUpdate(dataURL);
+    console.log('Test pattern PiP snapshot sent to main process');
+    
+    return true;
+  } catch (error) {
+    console.error('Error creating test pattern for PiP:', error);
+    return false;
+  }
+}
+
+// Helper function to draw a test pattern
+function drawTestPattern(ctx, width, height) {
+  // Fill background
+  ctx.fillStyle = '#222';
+  ctx.fillRect(0, 0, width, height);
+  
+  // Draw gradient border
+  const borderWidth = 10;
+  
+  // Top gradient
+  const topGradient = ctx.createLinearGradient(0, 0, width, 0);
+  topGradient.addColorStop(0, '#FF5F1F');
+  topGradient.addColorStop(0.5, '#FF1F8E');
+  topGradient.addColorStop(1, '#8A2BE2');
+  ctx.fillStyle = topGradient;
+  ctx.fillRect(0, 0, width, borderWidth);
+  
+  // Bottom gradient
+  const bottomGradient = ctx.createLinearGradient(0, 0, width, 0);
+  bottomGradient.addColorStop(0, '#8A2BE2');
+  bottomGradient.addColorStop(0.5, '#FF1F8E');
+  bottomGradient.addColorStop(1, '#FF5F1F');
+  ctx.fillStyle = bottomGradient;
+  ctx.fillRect(0, height - borderWidth, width, borderWidth);
+  
+  // Left gradient
+  const leftGradient = ctx.createLinearGradient(0, 0, 0, height);
+  leftGradient.addColorStop(0, '#FF5F1F');
+  leftGradient.addColorStop(0.5, '#FF1F8E');
+  leftGradient.addColorStop(1, '#8A2BE2');
+  ctx.fillStyle = leftGradient;
+  ctx.fillRect(0, 0, borderWidth, height);
+  
+  // Right gradient
+  const rightGradient = ctx.createLinearGradient(0, 0, 0, height);
+  rightGradient.addColorStop(0, '#8A2BE2');
+  rightGradient.addColorStop(0.5, '#FF1F8E');
+  rightGradient.addColorStop(1, '#FF5F1F');
+  ctx.fillStyle = rightGradient;
+  ctx.fillRect(width - borderWidth, 0, borderWidth, height);
+  
+  // Add text
+  ctx.fillStyle = '#FFF';
+  ctx.font = `${Math.max(12, Math.floor(width/20))}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Waiting for video...', width/2, height/2);
+  
+  // Draw checkerboard pattern in the corners for visual interest
+  const squareSize = 10;
+  const cornerSize = 50;
+  
+  // Top-left corner
+  drawCheckerboard(ctx, 0, 0, cornerSize, cornerSize, squareSize, '#444', '#333');
+  
+  // Top-right corner
+  drawCheckerboard(ctx, width - cornerSize, 0, cornerSize, cornerSize, squareSize, '#444', '#333');
+  
+  // Bottom-left corner
+  drawCheckerboard(ctx, 0, height - cornerSize, cornerSize, cornerSize, squareSize, '#444', '#333');
+  
+  // Bottom-right corner
+  drawCheckerboard(ctx, width - cornerSize, height - cornerSize, cornerSize, cornerSize, squareSize, '#444', '#333');
+}
+
+// Helper function to draw a checkerboard pattern
+function drawCheckerboard(ctx, x, y, width, height, squareSize, color1, color2) {
+  for (let i = 0; i < width; i += squareSize) {
+    for (let j = 0; j < height; j += squareSize) {
+      ctx.fillStyle = (Math.floor(i / squareSize) + Math.floor(j / squareSize)) % 2 === 0 ? color1 : color2;
+      ctx.fillRect(x + i, y + j, squareSize, squareSize);
+    }
   }
 }
 
@@ -2856,4 +3113,65 @@ function trackFrameTime() {
   
   // Schedule next tracking
   requestAnimationFrame(trackFrameTime);
+}
+
+// Initialize app when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM loaded - setting up app');
+  
+  // Start tracking frame times for performance monitoring
+  trackFrameTime();
+  
+  // Set up IPC listeners
+  setupIpcListeners();
+  
+  // Initialize UI and canvas
+  initializeUI();
+});
+
+// Set up IPC event listeners
+function setupIpcListeners() {
+  console.log('Setting up IPC event listeners');
+  
+  // Listen for toggle-pip event from main process
+  window.electronAPI.on('toggle-pip', () => {
+    console.log('Received toggle-pip event from main process');
+    togglePip();
+  });
+  
+  // Listen for zoom-in event from main process
+  window.electronAPI.on('zoom-in', () => {
+    console.log('Received zoom-in event from main process');
+    zoomIn();
+  });
+  
+  // Listen for zoom-out event from main process
+  window.electronAPI.on('zoom-out', () => {
+    console.log('Received zoom-out event from main process');
+    zoomOut();
+  });
+  
+  // Listen for set-zoom-center event from main process
+  window.electronAPI.on('set-zoom-center', (coords) => {
+    console.log(`Received set-zoom-center event: (${coords.x}, ${coords.y})`);
+    setZoom(state.currentZoom, coords.x, coords.y);
+  });
+}
+
+// Initialize UI elements and event handlers
+function initializeUI() {
+  // Add UI initialization here if needed
+  console.log('Initializing UI components');
+  
+  // Set up test pattern button for debugging
+  addDirectCaptureButton();
+  
+  // Add event listener for PiP toggle button
+  const togglePipBtn = document.getElementById('togglePipBtn');
+  if (togglePipBtn) {
+    togglePipBtn.addEventListener('click', () => {
+      console.log('Toggle PiP button clicked');
+      togglePip();
+    });
+  }
 }

@@ -1326,28 +1326,62 @@ function setupIpcHandlers() {
       return;
     }
     
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      // Ensure panel is visible when receiving frames
-      if (!floatingPanelWindow.isVisible()) {
-        floatingPanelWindow.show();
-      }
+    // Create the panel if it doesn't exist
+    if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
+      console.log('Panel not available. Creating new floating panel for PiP');
+      createOrShowFloatingPanel();
       
-      try {
-        floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
-        console.log('PiP frame forwarded to panel window');
-      } catch (err) {
-        console.error('Error sending PiP frame to panel:', err);
-      }
+      // Wait a short time for the panel to initialize
+      setTimeout(() => {
+        sendPipFrameToPanel(dataURL);
+      }, 200);
     } else {
-      console.warn('Cannot send PiP frame: panel window not available');
+      sendPipFrameToPanel(dataURL);
     }
   });
   
+  // Helper function to send PiP frame to panel
+  function sendPipFrameToPanel(dataURL) {
+    if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
+      console.warn('Panel still not available for PiP frame');
+      return;
+    }
+    
+    // Ensure panel is visible when receiving frames
+    if (!floatingPanelWindow.isVisible()) {
+      console.log('Making panel visible to show PiP');
+      floatingPanelWindow.show();
+    }
+    
+    try {
+      floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+      console.log('PiP frame forwarded to panel window');
+    } catch (err) {
+      console.error('Error sending PiP frame to panel:', err);
+    }
+  }
+  
   // Relay pip-state-update from renderer to panel
   ipcMain.on('pip-state-update', (event, isActive) => {
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    console.log(`Received PiP state update: ${isActive}`);
+    
+    // Create the panel if it doesn't exist and PiP is being activated
+    if (isActive && (!floatingPanelWindow || floatingPanelWindow.isDestroyed())) {
+      console.log('Creating panel for PiP activation');
+      createOrShowFloatingPanel();
+      
+      // Wait a short time for the panel to initialize
+      setTimeout(() => {
+        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+          console.log(`Forwarding PiP state to panel: ${isActive}`);
+          floatingPanelWindow.webContents.send('update-pip-state', isActive);
+        }
+      }, 200);
+    } else if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
       console.log(`Forwarding PiP state to panel: ${isActive}`);
       floatingPanelWindow.webContents.send('update-pip-state', isActive);
+    } else {
+      console.warn('Cannot forward PiP state: panel window not available');
     }
   });
   
@@ -1390,6 +1424,7 @@ function setupIpcHandlers() {
   ipcMain.on('panel-toggle-pip', () => {
     console.log('Received panel-toggle-pip message from panel');
     if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('Forwarding toggle-pip to main window');
       mainWindow.webContents.send('toggle-pip');
     } else {
       console.warn('Cannot forward toggle-pip: main window not available');
