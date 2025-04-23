@@ -1,0 +1,20 @@
+---
+description: Working with Electron applications that involve toggling state across multiple processes, especially in renderer.js, panelRenderer.js, or any IPC handlers related to toggleable UI elements
+globs: 
+alwaysApply: false
+---
+{
+  "description": "Prevent toggle state desynchronization in IPC communication",
+  "when": "Working with Electron applications that involve toggling state across multiple processes, especially in renderer.js, panelRenderer.js, or any IPC handlers related to toggleable UI elements",
+  "rule": "1. Add debounce mechanisms to toggle functions to prevent rapid state changes\n2. Track last toggle timestamp and enforce a minimum delay between toggles\n3. Add explicit state change checks before updating UI\n4. Force DOM reflows when visibility properties change\n5. Validate the fix by checking logs to ensure toggle operations match expected state transitions",
+  "examples": [
+    {
+      "before": "function togglePip() {\n  try {\n    console.log('Toggling PiP visibility');\n    isPipVisible = !isPipVisible;\n    console.log('PiP visibility toggled:', isPipVisible);\n    \n    // Send PiP state update to main process\n    window.electronAPI.sendPipStateUpdate(isPipVisible);\n    \n    // Start or stop sending PiP snapshots based on visibility\n    if (isPipVisible) {\n      // Send an immediate snapshot\n      sendPipSnapshot();\n      \n      // Set up an interval to send snapshots regularly\n      if (!pipSnapshotInterval) {\n        pipSnapshotInterval = setInterval(sendPipSnapshot, PIP_UPDATE_INTERVAL);\n      }\n    } else {\n      // Clear the snapshot interval if PiP is hidden\n      if (pipSnapshotInterval) {\n        clearInterval(pipSnapshotInterval);\n        pipSnapshotInterval = null;\n      }\n    }\n  } catch (err) {\n    console.error('Error toggling PiP:', err);\n  }\n}",
+      "after": "let lastToggleTime = 0;\nconst TOGGLE_DEBOUNCE_TIME = 200; // ms\n\nfunction togglePip() {\n  try {\n    // Debounce repeated toggle calls that come too quickly\n    const now = performance.now();\n    if (now - lastToggleTime < TOGGLE_DEBOUNCE_TIME) {\n      console.log('Ignoring toggle PiP call - too soon after previous toggle');\n      return;\n    }\n    lastToggleTime = now;\n    \n    console.log('Current PiP visibility before toggle:', isPipVisible);\n    isPipVisible = !isPipVisible;\n    console.log('New PiP visibility after toggle:', isPipVisible);\n    \n    // Send PiP state update to main process\n    window.electronAPI.sendPipStateUpdate(isPipVisible);\n    console.log('Sent PiP state update to main process:', isPipVisible);\n    \n    // Start or stop sending PiP snapshots based on visibility\n    if (isPipVisible) {\n      // Send an immediate snapshot\n      sendPipSnapshot();\n      console.log('Sent initial PiP snapshot');\n      \n      // Set up an interval to send snapshots regularly\n      if (!pipSnapshotInterval) {\n        console.log('Setting up PiP snapshot interval');\n        pipSnapshotInterval = setInterval(sendPipSnapshot, PIP_UPDATE_INTERVAL);\n      }\n    } else {\n      // Clear the snapshot interval if PiP is hidden\n      if (pipSnapshotInterval) {\n        console.log('Clearing PiP snapshot interval');\n        clearInterval(pipSnapshotInterval);\n        pipSnapshotInterval = null;\n      }\n    }\n  } catch (err) {\n    console.error('Error toggling PiP:', err);\n  }\n}"
+    }
+  ],
+  "tags": ["hallucination", "bugfix", "electron", "ipc", "toggle-state", "debounce"],
+  "validation": "Check console logs to verify toggle operations have proper sequence and don't rapidly reverse themselves. Look for 'Current PiP visibility' followed by 'New PiP visibility' logs that show the expected state transition. Verify UI elements properly appear/disappear without flickering.",
+  "ruleType": "Agent requested",
+  "helpfulFor": "Implementing toggle functionality across processes in Electron applications, especially when multiple components need to communicate state changes. This prevents race conditions and unwanted toggling that can lead to UI elements appearing to not respond to user actions."
+}
