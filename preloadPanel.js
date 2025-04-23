@@ -46,5 +46,11 @@ contextBridge.exposeInMainWorld('panelAPI', {
     ipcRenderer.on('video-size-update', (event, width, height) => {
       callback(width, height);
     });
+  },
+  onZoomStateUpdate: (callback) => {
+    ipcRenderer.on('zoom-state-update', (event, zoomState) => {
+      console.log('Panel: Received zoom state update');
+      callback(zoomState);
+    });
   }
 }); 

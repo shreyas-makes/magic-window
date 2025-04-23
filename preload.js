@@ -150,6 +150,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     console.log(`Sending video size update to main process: ${width}x${height}`);
     ipcRenderer.send('video-size-update', width, height);
   },
+  sendZoomStateUpdate: (zoomState) => {
+    console.log('Sending zoom state update to main process');
+    ipcRenderer.send('zoom-state-update', zoomState);
+  },
   // Add listeners for PiP commands
   onTogglePip: (callback) => {
     console.log('Registering handler for channel: toggle-pip');

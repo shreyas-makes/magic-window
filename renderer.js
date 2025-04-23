@@ -1050,50 +1050,58 @@ function setupCanvasRendering(stream) {
 
 // Function to smoothly transition zoom and position
 function setZoom(level, centerX, centerY, duration = 0.3) {
-    // Validate inputs to prevent NaN or undefined values
-    level = parseFloat(level) || 1.0;
+    // Constrain zoom level
+    level = Math.max(1.0, Math.min(level, 4.0));
     
-    // Use source video dimensions if available, otherwise use defaults
-    const videoWidth = sourceVideo && sourceVideo.videoWidth > 0 ? sourceVideo.videoWidth : 3840;
-    const videoHeight = sourceVideo && sourceVideo.videoHeight > 0 ? sourceVideo.videoHeight : 2160;
-    
-    // Ensure centerX and centerY are valid numbers within video dimensions
-    centerX = Math.min(Math.max(parseFloat(centerX) || videoWidth / 2, 0), videoWidth);
-    centerY = Math.min(Math.max(parseFloat(centerY) || videoHeight / 2, 0), videoHeight);
-    
-    // Ensure zoom level is within the preset limits (between 1.0 and 4.0)
-    level = Math.min(Math.max(level, 1.0), 4.0);
-    
-    // Set target values
+    // Update target values
     state.targetZoom = level;
-    state.targetCenterX = centerX;
-    state.targetCenterY = centerY;
+    state.targetCenterX = centerX !== undefined ? centerX : state.currentCenterX;
+    state.targetCenterY = centerY !== undefined ? centerY : state.currentCenterY;
     
-    console.log(`Setting zoom: level=${level}, center=(${centerX}, ${centerY}), duration=${duration}`);
+    // Animate the zoom change
+    if (usePixi && videoSprite) {
+        // Use GSAP for smooth animation
+        gsap.to(state, {
+            currentZoom: state.targetZoom,
+            currentCenterX: state.targetCenterX,
+            currentCenterY: state.targetCenterY,
+            duration: duration,
+            ease: "power2.out",
+            onUpdate: () => {
+                // Update sprite scale and position based on current values
+                videoSprite.scale.set(state.currentZoom);
+                
+                // Calculate position to keep the center point fixed
+                const viewportWidth = app.renderer.width;
+                const viewportHeight = app.renderer.height;
+                
+                // Center of the sprite in the viewport
+                videoSprite.x = viewportWidth / 2 - (state.currentCenterX * state.currentZoom);
+                videoSprite.y = viewportHeight / 2 - (state.currentCenterY * state.currentZoom);
+            },
+            onComplete: () => {
+                // Send zoom level update to main process for floating panel
+                window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
+                
+                // Send zoom state update for PiP
+                sendZoomStateUpdate();
+            }
+        });
+    } else if (canvas && canvasContext) {
+        // For Canvas2D fallback, just update immediately
+        state.currentZoom = state.targetZoom;
+        state.currentCenterX = state.targetCenterX;
+        state.currentCenterY = state.targetCenterY;
+        
+        // Send zoom level update to main process for floating panel
+        window.electronAPI.sendZoomLevelUpdate(state.currentZoom);
+        
+        // Send zoom state update for PiP
+        sendZoomStateUpdate();
+    }
     
-    // Use the global gsap object for animation
-    gsap.to(state, {
-        currentZoom: level,
-        currentCenterX: centerX,
-        currentCenterY: centerY,
-        duration: duration,
-        ease: 'power2.out',
-        onUpdate: function() {
-            // Optional: log progress occasionally to debug
-            if (Math.random() < 0.01) {  // Limit logging to 1% of updates
-                console.log(`Zoom progress: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
-            }
-            // Ensure we update the sprite transform
-            if (videoSprite) {
-                updateSpriteTransform();
-            }
-        },
-        onComplete: function() {
-            console.log(`Zoom complete: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
-            // Send zoom level update to main process after animation completes
-            window.electronAPI.sendZoomLevelUpdate(level);
-        }
-    });
+    // Update current preset index
+    currentPresetIndex = findClosestPresetIndex(level);
 }
 
 // Function to toggle FXAA
@@ -2340,22 +2348,33 @@ function initializeCanvas2DRenderingLoop() {
     // ... rest of the function ...
 }
 
-// Modify setZoom function to include zoom state update
-function setZoom(level, centerX, centerY, duration = 0.3) {
-    // ... existing code ...
+// Function to send current zoom state to the panel
+function sendZoomStateUpdate() {
+    if (!isPipVisible) return;
     
-    // Add additional code to update PiP zoom rectangle information
-    // (This is handled via the zoom level update which already exists)
+    const zoomState = {
+        zoom: state.currentZoom,
+        centerX: state.currentCenterX,
+        centerY: state.currentCenterY,
+        canvasWidth: app ? app.renderer.width : canvas.width,
+        canvasHeight: app ? app.renderer.height : canvas.height
+    };
+    
+    window.electronAPI.sendZoomStateUpdate(zoomState);
+    
+    // Also send video dimensions if we have a source video
+    if (sourceVideo) {
+        window.electronAPI.sendVideoSizeUpdate(sourceVideo.videoWidth, sourceVideo.videoHeight);
+    }
 }
 
-// Add handlers for PiP and zoom center commands
+// Initialize event listeners for PiP functionality
 window.electronAPI.onTogglePip(() => {
-    console.log('Received toggle-pip command from panel or shortcut');
+    console.log('Toggle PiP command received from main process');
     togglePip();
 });
 
 window.electronAPI.onSetZoomCenter((coords) => {
-    console.log(`Received set-zoom-center command: (${coords.x}, ${coords.y})`);
-    // Apply the new zoom center while maintaining the current zoom level
+    console.log('Set zoom center command received:', coords);
     setZoom(state.currentZoom, coords.x, coords.y);
 });

@@ -556,45 +556,49 @@ function setupSystemCapabilities() {
   }
 }
 
-// Function to register global shortcuts
+// Register global shortcuts
 function registerGlobalShortcuts() {
-  // Register keyboard shortcut for zoom in (Command+Plus)
-  globalShortcut.register('CommandOrControl+Plus', () => {
-    console.log('Keyboard shortcut for zoom in triggered');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('zoom-in');
-    }
-  });
-
-  // Register keyboard shortcut for zoom in (Command+Equal, same key as Plus but without shift)
-  globalShortcut.register('CommandOrControl+=', () => {
-    console.log('Keyboard shortcut for zoom in triggered (using =)');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('zoom-in');
-    }
-  });
-
-  // Register keyboard shortcut for zoom out (Command+Minus)
-  globalShortcut.register('CommandOrControl+-', () => {
-    console.log('Keyboard shortcut for zoom out triggered');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('zoom-out');
-    }
-  });
-
-  // Register existing recording toggle shortcut (if not already defined elsewhere)
-  globalShortcut.register('CommandOrControl+Shift+9', () => {
-    console.log('Keyboard shortcut for recording toggle triggered');
-    toggleRecording();
-  });
-
-  // Register Cmd+0 shortcut for toggling PiP
-  globalShortcut.register('CommandOrControl+0', () => {
-    console.log('Cmd+0 pressed - toggling PiP');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('toggle-pip');
-    }
-  });
+  try {
+    // Register Cmd+R/Ctrl+R for recording toggle
+    globalShortcut.register('CommandOrControl+R', () => {
+      console.log('Cmd+R pressed (toggle recording)');
+      toggleRecording();
+    });
+    
+    // Register Cmd+1/Ctrl+1 for 1.0x zoom
+    globalShortcut.register('CommandOrControl+1', () => {
+      console.log('Cmd+1 pressed (1.0x zoom)');
+      if (mainWindow) mainWindow.webContents.send('zoom-preset', { preset: 1.0 });
+    });
+    
+    // Register Cmd+2/Ctrl+2 for 1.5x zoom
+    globalShortcut.register('CommandOrControl+2', () => {
+      console.log('Cmd+2 pressed (1.5x zoom)');
+      if (mainWindow) mainWindow.webContents.send('zoom-preset', { preset: 1.5 });
+    });
+    
+    // Register Cmd+3/Ctrl+3 for 2.0x zoom
+    globalShortcut.register('CommandOrControl+3', () => {
+      console.log('Cmd+3 pressed (2.0x zoom)');
+      if (mainWindow) mainWindow.webContents.send('zoom-preset', { preset: 2.0 });
+    });
+    
+    // Register Cmd+4/Ctrl+4 for 4.0x zoom
+    globalShortcut.register('CommandOrControl+4', () => {
+      console.log('Cmd+4 pressed (4.0x zoom)');
+      if (mainWindow) mainWindow.webContents.send('zoom-preset', { preset: 4.0 });
+    });
+    
+    // Register Cmd+0/Ctrl+0 for toggling PiP
+    globalShortcut.register('CommandOrControl+0', () => {
+      console.log('Cmd+0 pressed (toggle PiP)');
+      if (mainWindow) mainWindow.webContents.send('toggle-pip');
+    });
+    
+    console.log('Global shortcuts registered');
+  } catch (err) {
+    console.error('Failed to register global shortcuts:', err);
+  }
 }
 
 // Function to unregister global shortcuts
@@ -1240,6 +1244,8 @@ app.whenReady().then(() => {
     // On macOS re-create a window when dock icon is clicked and no windows are open
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  setupIpcHandlers();
 });
 
 // Clean up on app quit
@@ -1257,117 +1263,118 @@ app.on('window-all-closed', function () {
 
 // Function to create or show the floating panel
 function createOrShowFloatingPanel() {
-  if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
-    console.log('Creating new floating panel window');
-    
-    // Create the floating panel window
-    floatingPanelWindow = new BrowserWindow({
-      width: 250,
-      height: 80,
-      frame: false,
-      alwaysOnTop: true,
-      resizable: false,
-      webPreferences: {
-        preload: path.join(__dirname, 'preloadPanel.js'),
-        nodeIntegration: false,
-        contextIsolation: true
-      }
-    });
-    
-    // Load the panel HTML file
-    floatingPanelWindow.loadFile('panel.html');
-    
-    // Handle panel closure
-    floatingPanelWindow.on('closed', () => {
-      console.log('Floating panel window closed');
-      floatingPanelWindow = null;
-    });
-  } else {
-    console.log('Showing existing floating panel window');
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    console.log('Showing existing floating panel');
     floatingPanelWindow.show();
+    return;
   }
+  
+  console.log('Creating new floating panel');
+  
+  // Create a new floating panel window
+  floatingPanelWindow = new BrowserWindow({
+    width: 250,
+    height: 190, // Increased height to accommodate PiP
+    frame: false,
+    transparent: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preloadPanel.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  
+  // Load the panel HTML
+  floatingPanelWindow.loadFile('panel.html');
+  
+  // Position the panel in the top-right corner
+  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
+  floatingPanelWindow.setPosition(screenWidth - 270, 20);
+  
+  // Log when ready
+  floatingPanelWindow.webContents.on('did-finish-load', () => {
+    console.log('Floating panel loaded');
+  });
+  
+  // Clean up reference when panel is closed
+  floatingPanelWindow.on('closed', () => {
+    console.log('Floating panel closed');
+    floatingPanelWindow = null;
+  });
 }
 
-// Add these IPC handlers for panel communication
-// Handle zoom level update from renderer
-ipcMain.on('zoom-level-update', (event, level) => {
-  console.log('Received zoom level update from renderer:', level);
+// Setup IPC handlers
+function setupIpcHandlers() {
+  // Relay pip-frame-update from renderer to panel
+  ipcMain.on('pip-frame-update', (event, dataURL) => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+    }
+  });
   
-  // Forward to floating panel if it exists
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    floatingPanelWindow.webContents.send('update-zoom-level', level);
-  }
-});
-
-// Handle panel zoom in command
-ipcMain.on('panel-zoom-in', () => {
-  console.log('Received zoom-in from panel');
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('zoom-in');
-  }
-});
-
-// Handle panel zoom out command
-ipcMain.on('panel-zoom-out', () => {
-  console.log('Received zoom-out from panel');
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('zoom-out');
-  }
-});
-
-// Handle panel toggle PiP command
-ipcMain.on('panel-toggle-pip', () => {
-  console.log('Received toggle-pip from panel');
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('toggle-pip');
-  }
-});
-
-// Handle panel collapse command
-ipcMain.on('panel-collapse', () => {
-  console.log('Received collapse from panel');
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    // Toggle between normal and minimized state
-    if (floatingPanelWindow.isMinimized()) {
-      floatingPanelWindow.restore();
-    } else {
+  // Relay pip-state-update from renderer to panel
+  ipcMain.on('pip-state-update', (event, isActive) => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      floatingPanelWindow.webContents.send('update-pip-state', isActive);
+    }
+  });
+  
+  // Relay zoom-state-update from renderer to panel
+  ipcMain.on('zoom-state-update', (event, zoomState) => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      floatingPanelWindow.webContents.send('zoom-state-update', zoomState);
+    }
+  });
+  
+  // Relay video-size-update from renderer to panel
+  ipcMain.on('video-size-update', (event, width, height) => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      floatingPanelWindow.webContents.send('video-size-update', width, height);
+    }
+  });
+  
+  // Relay zoom-level-update from renderer to panel
+  ipcMain.on('zoom-level-update', (event, level) => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      floatingPanelWindow.webContents.send('update-zoom-level', level);
+    }
+  });
+  
+  // Relay panel-zoom-in from panel to renderer
+  ipcMain.on('panel-zoom-in', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('zoom-in');
+    }
+  });
+  
+  // Relay panel-zoom-out from panel to renderer
+  ipcMain.on('panel-zoom-out', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('zoom-out');
+    }
+  });
+  
+  // Relay panel-toggle-pip from panel to renderer
+  ipcMain.on('panel-toggle-pip', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('toggle-pip');
+    }
+  });
+  
+  // Relay panel-set-zoom-center from panel to renderer
+  ipcMain.on('panel-set-zoom-center', (event, coords) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('set-zoom-center', coords);
+    }
+  });
+  
+  // Handle panel-collapse to minimize the panel
+  ipcMain.on('panel-collapse', () => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
       floatingPanelWindow.minimize();
     }
-  }
-});
-
-// Handle panel set zoom center command
-ipcMain.on('panel-set-zoom-center', (event, coords) => {
-  console.log('Received set-zoom-center from panel:', coords);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('set-zoom-center', coords);
-  }
-});
-
-// Handle PiP frame updates from renderer to panel
-ipcMain.on('pip-frame-update', (event, dataURL) => {
-  // Forward to floating panel if it exists
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
-  }
-});
-
-// Handle PiP state update from renderer to panel
-ipcMain.on('pip-state-update', (event, isActive) => {
-  console.log('Received PiP state update from renderer:', isActive);
-  
-  // Forward to floating panel if it exists
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    floatingPanelWindow.webContents.send('update-pip-state', isActive);
-  }
-});
-
-// Handle video size update from renderer to panel
-ipcMain.on('video-size-update', (event, width, height) => {
-  console.log(`Received video size update from renderer: ${width}x${height}`);
-  
-  // Forward to floating panel if it exists
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    floatingPanelWindow.webContents.send('video-size-update', width, height);
-  }
-}); 
+  });
+} 
