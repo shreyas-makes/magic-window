@@ -3801,3 +3801,98 @@ function initializeCodecSelection() {
   const initialCodec = document.getElementById('codec-select').value;
   window.api.send('set-codec', initialCodec);
 }
+
+// Global error handler
+window.addEventListener('error', (event) => {
+  console.error('Uncaught error:', event.error);
+  
+  try {
+    // Report error to main process if electronAPI is available
+    if (window.electronAPI && window.electronAPI.reportError) {
+      window.electronAPI.reportError({
+        message: event.error ? event.error.message : 'Unknown renderer error',
+        stack: event.error ? event.error.stack : '',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Show error to user
+    const errorMessage = event.error ? event.error.message : 'An unknown error occurred';
+    showErrorMessage(errorMessage);
+  } catch (error) {
+    console.error('Error in error handler:', error);
+  }
+});
+
+// Show error message to user
+function showErrorMessage(message) {
+  try {
+    const recordingMessage = document.getElementById('recordingMessage');
+    if (recordingMessage) {
+      recordingMessage.textContent = `Error: ${message}`;
+      recordingMessage.classList.add('error');
+    }
+  } catch (error) {
+    console.error('Error showing error message:', error);
+  }
+}
+
+// Performance monitoring
+let performanceWarningTimeout = null;
+let lastFpsDropTime = 0;
+const PERFORMANCE_WARNING_THRESHOLD = 59; // FPS
+const PERFORMANCE_WARNING_INTERVAL = 5000; // ms
+const PERFORMANCE_WARNING_DURATION = 3000; // ms
+
+// Function to show/hide performance warning
+function togglePerformanceWarning(show) {
+  try {
+    const warningElement = document.getElementById('performance-warning');
+    if (!warningElement) return;
+    
+    if (show) {
+      warningElement.style.display = 'block';
+      
+      // Auto-hide after a few seconds
+      if (performanceWarningTimeout) {
+        clearTimeout(performanceWarningTimeout);
+      }
+      
+      performanceWarningTimeout = setTimeout(() => {
+        warningElement.style.display = 'none';
+        performanceWarningTimeout = null;
+      }, PERFORMANCE_WARNING_DURATION);
+    } else {
+      warningElement.style.display = 'none';
+      if (performanceWarningTimeout) {
+        clearTimeout(performanceWarningTimeout);
+        performanceWarningTimeout = null;
+      }
+    }
+  } catch (error) {
+    console.error('Error toggling performance warning:', error);
+  }
+}
+
+// Function to check FPS and show warning if needed
+function checkPerformance(fps) {
+  try {
+    const now = Date.now();
+    
+    // Only show warning if it's been a while since the last one
+    if (fps < PERFORMANCE_WARNING_THRESHOLD && 
+        now - lastFpsDropTime > PERFORMANCE_WARNING_INTERVAL) {
+      console.warn(`Performance issue detected: ${fps.toFixed(1)} FPS`);
+      togglePerformanceWarning(true);
+      lastFpsDropTime = now;
+    }
+  } catch (error) {
+    console.error('Error checking performance:', error);
+  }
+}
+
+// Safe MediaRecorder creation
+function createMediaRecorder(stream, options) {
+  try {
+    const recorder = new MediaRecorder(stream, options);
+    

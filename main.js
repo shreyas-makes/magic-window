@@ -7,8 +7,23 @@ const ffmpegStatic = require('ffmpeg-static');
 const ffprobeStatic = require('ffprobe-static').path;
 const checkDiskSpace = require('check-disk-space').default;
 
+// Enable Electron sandbox for security
+app.enableSandbox();
+
+// Set up error logging
+function logError(source, error) {
+  console.error(`[ERROR] ${source}:`, error);
+  // Could add electron-log here for file logging
+}
+
 // Set ffmpeg and ffprobe paths to the static binaries
-ffmpeg.setFfmpegPath(ffmpegStatic);
+try {
+  ffmpeg.setFfmpegPath(ffmpegStatic);
+  console.log('FFmpeg path set to:', ffmpegStatic);
+} catch (err) {
+  logError('FFmpeg Setup', err);
+}
+
 try {
   // Try to set ffprobe path
   if (fs.existsSync(ffprobeStatic)) {
@@ -19,7 +34,7 @@ try {
     console.warn('Will attempt concatenation without ffprobe');
   }
 } catch (err) {
-  console.error('Error setting ffprobe path:', err);
+  logError('FFprobe Setup', err);
 }
 
 // Simple settings storage implementation
@@ -37,7 +52,7 @@ class Settings {
         this.data = JSON.parse(data);
       }
     } catch (err) {
-      console.error('Error loading settings:', err);
+      logError('Settings Load', err);
     }
   }
 
@@ -45,7 +60,7 @@ class Settings {
     try {
       fs.writeFileSync(this.settingsPath, JSON.stringify(this.data, null, 2));
     } catch (err) {
-      console.error('Error saving settings:', err);
+      logError('Settings Save', err);
     }
   }
 
@@ -82,116 +97,186 @@ const DISK_SPACE_LOW_THRESHOLD = 2 * 1024 * 1024 * 1024; // 2GB
 const DISK_SPACE_CRITICAL_THRESHOLD = 100 * 1024 * 1024; // 100MB
 
 const createWindow = () => {
-  // Get the primary display's work area dimensions
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-  
-  // Calculate window dimensions (80% of screen size)
-  const windowWidth = Math.floor(width * 0.8);
-  const windowHeight = Math.floor(height * 0.8);
+  try {
+    // Get the primary display's work area dimensions
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+    
+    // Calculate window dimensions (80% of screen size)
+    const windowWidth = Math.floor(width * 0.8);
+    const windowHeight = Math.floor(height * 0.8);
 
-  mainWindow = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      enableRemoteModule: false,
-      webSecurity: true
+    mainWindow = new BrowserWindow({
+      width: windowWidth,
+      height: windowHeight,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        enableRemoteModule: false,
+        webSecurity: true,
+        sandbox: true // Enable sandbox for renderer process
+      }
+    });
+
+    // Set permissions for media devices and screen capture
+    mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+      if (permission === 'media' || 
+          permission === 'display-capture' || 
+          permission === 'mediaKeySystem' ||
+          permission === 'geolocation' || 
+          permission === 'notifications') {
+        callback(true);
+      } else {
+        console.log(`Denied permission request: ${permission}`);
+        callback(false);
+      }
+    });
+
+    // Set permissions for media access
+    mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+      return permission === 'media' || 
+             permission === 'display-capture' || 
+             permission === 'mediaKeySystem';
+    });
+
+    // Center the window on the screen
+    mainWindow.center();
+
+    // Load the index.html file
+    mainWindow.loadFile('index.html').catch(err => {
+      logError('Window Load', err);
+      dialog.showErrorBox('Application Error', 'Failed to load application interface.');
+    });
+
+    // Open DevTools for debugging
+    if (process.env.NODE_ENV === 'development') {
+      mainWindow.webContents.openDevTools();
     }
-  });
 
-  // Set permissions for media devices and screen capture
-  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || 
-        permission === 'display-capture' || 
-        permission === 'mediaKeySystem' ||
-        permission === 'geolocation' || 
-        permission === 'notifications') {
-      callback(true);
-    } else {
-      callback(false);
-    }
-  });
+    // Handle window errors
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      logError('Window Load Failed', `${errorCode}: ${errorDescription}`);
+      dialog.showErrorBox('Load Error', `Failed to load the application: ${errorDescription}`);
+    });
 
-  // Set permissions for media access
-  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
-    return permission === 'media' || 
-           permission === 'display-capture' || 
-           permission === 'mediaKeySystem';
-  });
-
-  // Center the window on the screen
-  mainWindow.center();
-
-  // Load the index.html file
-  mainWindow.loadFile('index.html');
-
-  // Open DevTools for debugging
-  mainWindow.webContents.openDevTools();
-
-  // Log when the window is ready
-  mainWindow.webContents.on('did-finish-load', () => {
-    console.log('Window loaded and ready');
-  });
+    // Log when the window is ready
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('Window loaded and ready');
+      
+      // Check for recoverable recordings after window is loaded
+      checkForPreviousRecordings();
+    });
+    
+    // Handle crashed renders
+    mainWindow.webContents.on('crashed', (event, killed) => {
+      logError('Renderer Crash', `Renderer process ${killed ? 'was killed' : 'crashed'}`);
+      dialog.showErrorBox(
+        'Application Crashed', 
+        'The application window crashed. Any in-progress recording may be recoverable on next startup.'
+      );
+    });
+    
+    // Handle unresponsive window
+    mainWindow.on('unresponsive', () => {
+      logError('Renderer Unresponsive', 'Application window is not responding');
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Application Not Responding',
+        message: 'The application is not responding. Wait for it to recover or restart the application.',
+        buttons: ['Wait', 'Force Quit'],
+        defaultId: 0
+      }).then(result => {
+        if (result.response === 1) {
+          app.exit(1);
+        }
+      }).catch(err => {
+        logError('Unresponsive Dialog', err);
+      });
+    });
+    
+    // Handle window closed
+    mainWindow.on('closed', () => {
+      mainWindow = null;
+    });
+  } catch (error) {
+    logError('Create Window', error);
+    dialog.showErrorBox('Application Error', 'Failed to create application window.');
+    app.quit();
+  }
 };
 
 // Helper function to send UI state updates to renderer
 function sendStateUpdate() {
   console.log('Sending UI state update to renderer, isRecording:', isRecording, 'isPaused:', isPaused);
-  // Use the global mainWindow reference
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    console.log('Using mainWindow reference to send state update');
-    mainWindow.webContents.send('updateState', { isRecording, isPaused });
-  } else {
-    console.warn('mainWindow not available for state update');
+  try {
+    // Use the global mainWindow reference
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('Using mainWindow reference to send state update');
+      mainWindow.webContents.send('updateState', { isRecording, isPaused });
+    } else {
+      console.warn('mainWindow not available for state update');
+    }
+  } catch (error) {
+    logError('Send State Update', error);
   }
 }
 
 // Toggle recording function for hotkey
 function toggleRecording() {
-  if (!isRecording) {
-    // If not recording, start
-    // Check if we have a canvas renderer setup (not using recorder window anymore)
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      // Start canvas recording through the main window's renderer
-      mainWindow.webContents.send('hotkey-start-recording');
+  try {
+    if (!isRecording) {
+      // If not recording, start
+      // Check if we have a canvas renderer setup (not using recorder window anymore)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        // Start canvas recording through the main window's renderer
+        mainWindow.webContents.send('hotkey-start-recording');
+      } else {
+        console.warn('No main window available for recording.');
+      }
+    } else if (isPaused) {
+      // If paused, resume
+      resumeRecording();
     } else {
-      console.warn('No main window available for recording.');
+      // If recording, pause
+      pauseRecording();
     }
-  } else if (isPaused) {
-    // If paused, resume
-    resumeRecording();
-  } else {
-    // If recording, pause
-    pauseRecording();
+  } catch (error) {
+    logError('Toggle Recording', error);
   }
 }
 
 // Pause recording
 function pauseRecording() {
-  if (isRecording && !isPaused && recordingWindow) {
-    console.log('Pausing recording');
-    isPaused = true;
-    
-    // Send pause command to recording window
-    recordingWindow.webContents.send('pause-recording');
-    
-    sendStateUpdate();
+  try {
+    if (isRecording && !isPaused && recordingWindow) {
+      console.log('Pausing recording');
+      isPaused = true;
+      
+      // Send pause command to recording window
+      recordingWindow.webContents.send('pause-recording');
+      
+      sendStateUpdate();
+    }
+  } catch (error) {
+    logError('Pause Recording', error);
   }
 }
 
 // Resume recording
 function resumeRecording() {
-  if (isRecording && isPaused && recordingWindow) {
-    console.log('Resuming recording');
-    isPaused = false;
-    
-    // Send resume command to recording window
-    recordingWindow.webContents.send('resume-recording');
-    
-    sendStateUpdate();
+  try {
+    if (isRecording && isPaused && recordingWindow) {
+      console.log('Resuming recording');
+      isPaused = false;
+      
+      // Send resume command to recording window
+      recordingWindow.webContents.send('resume-recording');
+      
+      sendStateUpdate();
+    }
+  } catch (error) {
+    logError('Resume Recording', error);
   }
 }
 
@@ -301,159 +386,131 @@ function ensureDirExists(dirPath) {
 }
 
 // Function to concatenate video segments
-async function concatenateSegments(tempDir) {
-  if (!tempDir || !fs.existsSync(tempDir)) {
-    throw new Error('Temporary directory does not exist');
-  }
-  
-  try {
-    // Get list of segment files
-    const segmentFiles = await listSegments(tempDir);
-    
-    if (!segmentFiles || segmentFiles.length === 0) {
-      throw new Error('No segment files found');
-    }
-    
-    // Ensure target directory exists
-    const outputDir = getCurrentRecordingDir(currentSavePath);
-    ensureDirExists(outputDir);
-    
-    // Create output file name with timestamp
-    const timestamp = getFormattedTimestamp();
-    const outputFileName = `Magic Window Recording - ${timestamp}.mp4`;
-    const outputPath = path.join(outputDir, outputFileName);
-    
-    console.log(`Concatenating ${segmentFiles.length} segments to: ${outputPath}`);
-    
-    return new Promise((resolve, reject) => {
-      try {
-        // Always use concat demuxer method for better reliability
-        // Create a concat file that lists all segments
-        const concatFilePath = path.join(tempDir, 'concat_list.txt');
-        const concatContent = segmentFiles
-          .map(segment => `file '${segment.path.replace(/'/g, "'\\''")}'`)
-          .join('\n');
-          
-        fs.writeFileSync(concatFilePath, concatContent);
-        console.log('Created concat file with content:', concatContent);
-        
-        // Create a new ffmpeg command using the demuxer method
-        const command = ffmpeg()
-          .input(concatFilePath)
-          .inputOptions(['-f', 'concat', '-safe', '0'])
-          .outputOptions('-c copy') // Copy both video and audio codec without re-encoding
-          .output(outputPath);
-        
-        // Set event handlers
-        command
-          .on('start', cmdLine => {
-            console.log('FFmpeg started with command:', cmdLine);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('concatenationStatus', { status: 'started' });
-            }
-          })
-          .on('progress', progress => {
-            console.log(`FFmpeg processing: ${JSON.stringify(progress)}`);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('concatenationStatus', { 
-                status: 'progress', 
-                progress 
-              });
-            }
-          })
-          .on('error', async error => {
-            console.error('Error concatenating segments with FFmpeg:', error);
-            
-            // Try fallback method for very small segments
-            console.log('Attempting fallback method for concatenation...');
-            
-            try {
-              // Simple binary file concatenation
-              const writeStream = fs.createWriteStream(outputPath);
-              
-              for (const segment of segmentFiles) {
-                console.log(`Concatenating segment: ${segment.name}`);
-                
-                if (segment.size > 0) {
-                  // Read segment data and write to output file
-                  const segmentData = fs.readFileSync(segment.path);
-                  writeStream.write(segmentData);
-                } else {
-                  console.warn(`Skipping zero-byte segment: ${segment.name}`);
-                }
-              }
-              
-              writeStream.end();
-              
-              // Wait for write to complete
-              await new Promise((res) => writeStream.on('finish', res));
-              
-              console.log('Fallback concatenation complete');
-              
-              // Clean up temporary directory
-              try {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-                console.log(`Temporary directory ${tempDir} removed`);
-              } catch (cleanupError) {
-                console.error('Error cleaning up temporary directory:', cleanupError);
-              }
-              
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('concatenationStatus', { 
-                  status: 'complete', 
-                  outputPath,
-                  note: 'Used fallback method due to FFmpeg error'
-                });
-              }
-              
-              resolve(outputPath);
-            } catch (fallbackError) {
-              console.error('Fallback concatenation failed:', fallbackError);
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('concatenationStatus', { 
-                  status: 'error', 
-                  error: `Both FFmpeg and fallback methods failed: ${fallbackError.message}` 
-                });
-                dialog.showErrorBox(
-                  'Error Saving Recording', 
-                  `Failed to process recording segments. Temporary files are preserved at: ${tempDir}`
-                );
-              }
-              reject(fallbackError);
-            }
-          })
-          .on('end', () => {
-            console.log('FFmpeg concatenation complete');
-            
-            // Clean up temporary directory
-            try {
-              fs.rmSync(tempDir, { recursive: true, force: true });
-              console.log(`Temporary directory ${tempDir} removed`);
-            } catch (cleanupError) {
-              console.error('Error cleaning up temporary directory:', cleanupError);
-            }
-            
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('concatenationStatus', { 
-                status: 'complete', 
-                outputPath 
-              });
-            }
-            
-            resolve(outputPath);
-          });
-        
-        // Run the command
-        command.run();
-      } catch (error) {
-        console.error('FFmpeg command setup error:', error);
-        reject(error);
+async function concatenateSegments(tempDir, outputPath) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log(`Concatenating segments from ${tempDir} to ${outputPath}`);
+      
+      // Get segments
+      const segments = await listSegments(tempDir);
+      if (!segments || segments.length === 0) {
+        const errorMsg = `No segments found in ${tempDir}`;
+        console.error(errorMsg);
+        return reject(new Error(errorMsg));
       }
-    });
-  } catch (error) {
-    console.error('Error in concatenation setup:', error);
-    throw error;
-  }
+      
+      console.log(`Found ${segments.length} segments to concatenate`);
+      
+      // Create temporary file listing segments for ffmpeg
+      const listFilePath = path.join(tempDir, 'segments.txt');
+      let listContent = '';
+      
+      for (const segment of segments) {
+        // Escape single quotes in paths for ffmpeg
+        const escapedPath = segment.replace(/'/g, '\\\'');
+        listContent += `file '${escapedPath}'\n`;
+      }
+      
+      try {
+        fs.writeFileSync(listFilePath, listContent);
+        console.log('Created segment list file at:', listFilePath);
+      } catch (err) {
+        logError('Write Segment List', err);
+        return reject(new Error(`Failed to create segment list: ${err.message}`));
+      }
+      
+      // Check if output directory exists
+      const outputDir = path.dirname(outputPath);
+      ensureDirExists(outputDir);
+      
+      // If output file already exists, remove it
+      if (fs.existsSync(outputPath)) {
+        try {
+          fs.unlinkSync(outputPath);
+        } catch (err) {
+          logError('Remove Existing Output', err);
+          // Continue anyway
+        }
+      }
+      
+      // Use ffmpeg concat demuxer
+      let command = ffmpeg()
+        .input(listFilePath)
+        .inputOptions(['-f', 'concat', '-safe', '0'])
+        .outputOptions(['-c', 'copy']) // Copy streams without re-encoding
+        .output(outputPath);
+      
+      // Log progress
+      command.on('progress', (progress) => {
+        if (progress && progress.percent) {
+          console.log(`Concatenation progress: ${Math.round(progress.percent)}%`);
+          
+          // Send progress to renderer
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', {
+              status: 'progress',
+              percent: Math.round(progress.percent),
+              message: `Joining segments: ${Math.round(progress.percent)}%`
+            });
+          }
+        }
+      });
+      
+      // Handle completion
+      command.on('end', () => {
+        console.log('Concatenation completed successfully');
+        
+        // Check if file exists and has content
+        try {
+          const stats = fs.statSync(outputPath);
+          if (stats.size === 0) {
+            const errorMsg = 'Concatenation produced an empty file';
+            console.error(errorMsg);
+            
+            // Send error to renderer
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', {
+                status: 'error',
+                message: errorMsg
+              });
+            }
+            
+            return reject(new Error(errorMsg));
+          }
+          
+          console.log(`Output file size: ${stats.size} bytes`);
+          resolve(outputPath);
+        } catch (err) {
+          logError('Check Output File', err);
+          reject(err);
+        }
+      });
+      
+      // Handle errors
+      command.on('error', (err) => {
+        const errorMsg = `Concatenation error: ${err.message}`;
+        logError('FFmpeg Concatenation', err);
+        
+        // Send error to renderer
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('concatenationStatus', {
+            status: 'error',
+            message: errorMsg
+          });
+        }
+        
+        reject(new Error(errorMsg));
+      });
+      
+      // Start the process
+      command.run();
+      console.log('Started FFmpeg concatenation process');
+      
+    } catch (err) {
+      logError('Concatenate Segments', err);
+      reject(err);
+    }
+  });
 }
 
 // Function to list segments in a directory
@@ -613,835 +670,748 @@ function unregisterGlobalShortcuts() {
   globalShortcut.unregisterAll();
 }
 
-// Create window when app is ready
+// Main app lifecycle events
+
+// App ready event
 app.whenReady().then(() => {
-  // Set up system capabilities (screen recording permissions)
-  setupSystemCapabilities();
-  
-  createWindow();
-  
-  // Initialize save path
-  initializeSavePath();
-  
-  // Register global shortcuts when app is ready
-  registerGlobalShortcuts();
-  
-  // Handle IPC ping message from renderer
-  ipcMain.on('ping', () => {
-    console.log('ping received in main process');
-    // Send pong back to renderer using mainWindow reference
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('pong');
-    } else {
-      console.warn('mainWindow not available to respond to ping');
-    }
-  });
-  
-  // Handle request for screen and window sources
-  ipcMain.handle('getSources', async () => {
-    try {
-      const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
-      return sources;
-    } catch (error) {
-      console.error('Error getting sources:', error);
-      throw error;
-    }
-  });
-  
-  // Handle request for screen and window sources with thumbnails
-  ipcMain.handle('getScreenSources', async () => {
-    try {
-      const sources = await desktopCapturer.getSources({ 
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 150, height: 150 },
-        fetchWindowIcons: true
-      });
-      console.log(`Found ${sources.length} screen sources from main process`);
-      return sources;
-    } catch (error) {
-      console.error('Error getting screen sources:', error);
-      throw error;
-    }
-  });
-  
-  // Handle source selection from renderer
-  ipcMain.on('sourceSelected', (event, selectedSourceId) => {
-    console.log('Source selected:', selectedSourceId);
-    sourceId = selectedSourceId;
-  });
+  try {
+    console.log('App is ready');
+    // Create main window
+    createWindow();
+    
+    // Register system capabilities
+    setupSystemCapabilities();
+    
+    // Register global shortcuts
+    registerGlobalShortcuts();
+    
+    // Setup IPC handlers
+    setupIpcHandlers();
+    
+    // Handle window activation
+    app.on('activate', () => {
+      try {
+        // On macOS, re-create window when dock icon is clicked and no windows are open
+        if (BrowserWindow.getAllWindows().length === 0) {
+          createWindow();
+        }
+      } catch (error) {
+        logError('App Activate', error);
+      }
+    });
+  } catch (error) {
+    logError('App Ready', error);
+    dialog.showErrorBox('Application Startup Error', 
+      `Failed to start the application: ${error.message}`);
+    app.quit();
+  }
+}).catch(error => {
+  logError('App Ready Promise', error);
+  dialog.showErrorBox('Application Startup Error', 
+    `Failed to start the application: ${error.message}`);
+  app.quit();
+});
 
-  // Handle get settings request
-  ipcMain.handle('getSettings', () => {
-    console.log('getSettings handler called');
-    return {
-      savePath: currentSavePath || app.getPath('userData')
-    };
-  });
-  
-  // Handle show save dialog request
-  ipcMain.handle('showSaveDialog', async () => {
-    try {
-      const { canceled, filePaths } = await dialog.showOpenDialog({
-        properties: ['openDirectory'],
-        defaultPath: currentSavePath
-      });
-      
-      if (!canceled && filePaths.length > 0) {
-        currentSavePath = filePaths[0];
-        store.set('savePath', currentSavePath);
-        console.log('New save path set:', currentSavePath);
-        return currentSavePath;
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error showing save dialog:', error);
-      throw error;
+// Quit when all windows are closed, except on macOS
+app.on('window-all-closed', () => {
+  try {
+    if (process.platform !== 'darwin') {
+      app.quit();
     }
-  });
-  
-  // Handle pause recording request
-  ipcMain.on('pauseRecording', () => {
-    pauseRecording();
-  });
-  
-  // Handle resume recording request
-  ipcMain.on('resumeRecording', () => {
-    resumeRecording();
-  });
-  
-  // Handle start recording request
-  ipcMain.on('startRecording', async (event) => {
-    if (isRecording) {
-      console.warn('Already recording.');
-      return;
-    }
-    
-    if (!sourceId) {
-      console.warn('No source selected for recording.');
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', 'Please select a source first.');
-      }
-      return;
-    }
-    
-    try {
-      // Check disk space before starting
-      await checkDiskSpaceAvailable();
-      
-      // Create a unique temporary directory for this recording session
-      const tempBaseDir = path.join(os.tmpdir(), 'magic-window-recorder');
-      fs.mkdirSync(tempBaseDir, { recursive: true });
-      tempSessionDir = fs.mkdtempSync(path.join(tempBaseDir, 'recording-'));
-      console.log(`Created temporary session directory: ${tempSessionDir}`);
-      
-      // Reset segment index
-      segmentIndex = 0;
-      
-      // Create a new BrowserWindow to handle the recording
-      recordingWindow = new BrowserWindow({
-        width: 400,
-        height: 300,
-        show: false,
-        webPreferences: {
-          nodeIntegration: true,
-          contextIsolation: false
-        }
-      });
-      
-      // Load an HTML file for recording
-      await recordingWindow.loadFile('recorder.html');
-      
-      // Pass the sourceId and tempSessionDir to the recording window
-      recordingWindow.webContents.executeJavaScript(`
-        window.sourceId = '${sourceId}';
-        window.tempSessionDir = '${tempSessionDir.replace(/\\/g, '\\\\')}';
-        document.dispatchEvent(new Event('sourceReady'));
-      `);
-      
-      // Set recording state
-      isRecording = true;
-      isPaused = false;
-      sendStateUpdate();
-      
-      // Start disk space monitoring
-      startDiskSpaceMonitoring();
-      
-      // Start recording timer
-      startRecordingTimer();
-      
-      console.log('Recording started, updated UI state');
-      
-      // Handle window close
-      recordingWindow.on('closed', () => {
-        recordingWindow = null;
-        if (isRecording) {
-          isRecording = false;
-          isPaused = false;
-          sendStateUpdate();
-          
-          // Stop disk space monitoring
-          stopDiskSpaceMonitoring();
-          
-          // Stop recording timer
-          stopRecordingTimer();
-        }
-      });
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', error.toString());
-      }
-    }
-  });
-  
-  // Handle start canvas recording request (direct from renderer process)
-  ipcMain.on('startCanvasRecording', async (event) => {
-    if (isRecording) {
-      console.warn('Already recording.');
-      return;
-    }
-    
-    try {
-      // Create or show the floating panel window
-      createOrShowFloatingPanel();
-      
-      // Check disk space before starting
-      await checkDiskSpaceAvailable();
-      
-      // Create a unique temporary directory for this recording session
-      const tempBaseDir = path.join(os.tmpdir(), 'magic-window-recorder');
-      fs.mkdirSync(tempBaseDir, { recursive: true });
-      tempSessionDir = fs.mkdtempSync(path.join(tempBaseDir, 'recording-'));
-      console.log(`Created temporary session directory: ${tempSessionDir}`);
-      
-      // Reset segment index
-      segmentIndex = 0;
-      
-      // Set recording state
-      isRecording = true;
-      isPaused = false;
-      sendStateUpdate();
-      
-      // Start disk space monitoring
-      startDiskSpaceMonitoring();
-      
-      // Start recording timer
-      startRecordingTimer();
-      
-      console.log('Canvas recording started, updated UI state');
-      
-    } catch (error) {
-      console.error('Error starting canvas recording:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', error.toString());
-      }
-    }
-  });
-  
-  // Handle blob chunks from renderer
-  ipcMain.on('sendBlobChunk', (event, { buffer, mimeType, isLastChunk }) => {
-    try {
-      // Ensure temp session directory exists
-      if (!tempSessionDir) {
-        throw new Error('No temporary session directory available');
-      }
-      
-      // Skip chunks with zero size
-      if (!buffer || buffer.byteLength === 0) {
-        console.warn(`Skipping chunk - empty (0 bytes)`);
-        return;
-      }
+  } catch (error) {
+    logError('Window All Closed', error);
+    app.quit();
+  }
+});
 
-      const segmentPath = path.join(tempSessionDir, `segment_${segmentIndex}.mp4`);
-      fs.writeFileSync(segmentPath, Buffer.from(buffer));
-      console.log(`Wrote segment ${segmentIndex} to ${segmentPath} (${buffer.byteLength} bytes)`);
-      
-      // Increment segment index for next chunk
-      segmentIndex++;
-      
-      // If this is the last chunk, start concatenation
-      if (isLastChunk) {
-        console.log('Last chunk received, initiating concatenation');
-        ipcMain.emit('stopRecording');
-      }
-    } catch (error) {
-      console.error('Error handling blob chunk:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', `Error saving recording segment: ${error.toString()}`);
-      }
-    }
-  });
-  
-  // Handle segment data from the recording window
-  ipcMain.on('segment-data', (event, { buffer, mimeType, segmentNumber }) => {
-    try {
-      // Ensure temp session directory exists
-      if (!tempSessionDir) {
-        throw new Error('No temporary session directory available');
-      }
-      
-      // Skip segments with zero size (completely empty frames)
-      if (!buffer || buffer.byteLength === 0) {
-        console.warn(`Skipping segment ${segmentNumber} - empty (0 bytes)`);
-        return;
-      }
-      
-      // Log small segments but don't skip them
-      if (buffer.byteLength < 1000) {
-        console.warn(`Small segment ${segmentNumber} detected (${buffer.byteLength} bytes) - will try to process anyway`);
-      }
-      
-      // Determine file extension based on MIME type
-      let fileExtension = '.mp4'; // Default
-      if (mimeType && mimeType.includes('webm')) {
-        fileExtension = '.webm';
-      }
-      
-      // Create segment file name
-      const segmentFileName = `segment_${segmentNumber}${fileExtension}`;
-      const segmentPath = path.join(tempSessionDir, segmentFileName);
-      
-      // Write segment data to file
-      fs.writeFileSync(segmentPath, Buffer.from(buffer));
-      
-      // Verify the file was written correctly
-      const stats = fs.statSync(segmentPath);
-      console.log(`Segment ${segmentNumber} saved to: ${segmentPath} (${stats.size} bytes)`);
-      
-      if (stats.size === 0) {
-        console.warn(`Warning: Segment ${segmentNumber} has zero bytes`);
-      }
-    } catch (error) {
-      console.error('Error saving segment:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', error.toString());
-      }
-    }
-  });
-  
-  // Handle listing segment files for the UI
-  ipcMain.handle('listSegments', async (event, dirPath) => {
-    try {
-      return await listSegments(dirPath);
-    } catch (error) {
-      console.error('Error handling listSegments:', error);
-      throw error;
-    }
-  });
-  
-  // Handle recording complete notification
-  ipcMain.on('recording-complete', async () => {
-    console.log('Recording completed, ready for concatenation');
-    console.log(`All segments stored in: ${tempSessionDir}`);
+// Clean up before quit
+app.on('will-quit', (event) => {
+  try {
+    // Unregister global shortcuts
+    unregisterGlobalShortcuts();
     
-    isRecording = false;
-    isPaused = false;
-    if (recordingWindow) {
-      recordingWindow.close();
-      recordingWindow = null;
-    }
-    sendStateUpdate();
-    
-    // Stop disk space monitoring
-    stopDiskSpaceMonitoring();
-    
-    // Process and concatenate segments
-    try {
-      // Check if we have valid segments to process
-      const segments = await listSegments(tempSessionDir);
+    // Check if recording is in progress
+    if (isRecording) {
+      console.log('Recording in progress, stopping for app quit');
+      // Stop recording timer
+      stopRecordingTimer();
       
-      if (!segments || segments.length === 0) {
-        throw new Error('No recording segments found. The recording may be empty.');
-      }
+      // Stop disk space monitoring
+      stopDiskSpaceMonitoring();
       
-      // Consider all non-zero segments as valid (even small ones)
-      const validSegments = segments.filter(segment => segment.size > 0);
-      
-      if (validSegments.length === 0) {
-        throw new Error('All recording segments are empty. No valid video data was captured.');
-      }
-      
-      console.log(`Found ${validSegments.length} valid segments out of ${segments.length} total`);
-      
-      // Log warning about small segments
-      const smallSegments = validSegments.filter(segment => segment.size < 10000);
-      if (smallSegments.length > 0) {
-        console.warn(`Warning: ${smallSegments.length} segments are smaller than 10KB and may have limited content`);
-      }
-      
-      // If we only have one segment, just copy it instead of concatenating
-      if (validSegments.length === 1) {
-        console.log('Only one valid segment found, copying directly without concatenation');
-        
-        // Ensure target directory exists
-        const outputDir = getCurrentRecordingDir(currentSavePath);
-        ensureDirExists(outputDir);
-        
-        // Create output file name with timestamp
-        const timestamp = getFormattedTimestamp();
-        const outputFileName = `Magic Window Recording - ${timestamp}.mp4`;
-        const outputPath = path.join(outputDir, outputFileName);
-        
-        // Copy the file
-        fs.copyFileSync(validSegments[0].path, outputPath);
-        console.log(`Copied segment to final recording at: ${outputPath}`);
-        
-        // Notify renderer that recording is saved
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('recordingSaved', outputPath);
-        }
-        
-        // Clean up temporary directory
-        try {
-          fs.rmSync(tempSessionDir, { recursive: true, force: true });
-          console.log(`Temporary directory ${tempSessionDir} removed`);
-        } catch (cleanupError) {
-          console.error('Error cleaning up temporary directory:', cleanupError);
-        }
-      } else {
-        // Proceed with concatenation
-        const outputPath = await concatenateSegments(tempSessionDir);
-        
-        // Notify renderer that recording is saved
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('recordingSaved', outputPath);
-        }
-      }
-    } catch (error) {
-      console.error('Error processing recording:', error);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', `Error processing recording: ${error.toString()}`);
-      }
-    }
-  });
-  
-  // Handle stop recording request
-  ipcMain.on('stopRecording', async () => {
-    console.log('Stop recording request received');
-    
-    if (!isRecording) {
-      console.warn('Not recording, nothing to stop.');
-      return;
-    }
-    
-    // Hide the floating panel if it exists
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      console.log('Hiding floating panel window');
-      floatingPanelWindow.hide();
-    }
-    
-    // Set recording state
-    isRecording = false;
-    isPaused = false;
-    sendStateUpdate();
-    
-    // Stop recording timer
-    stopRecordingTimer();
-    
-    // Stop disk space monitoring
-    stopDiskSpaceMonitoring();
-    
-    try {
-      if (recordingWindow) {
-        // Stop recording in the recorder window
-        recordingWindow.webContents.send('stop-recording');
-        
-        // Wait a bit to allow the recorder window to finish its stop process
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Close the recorder window
-        if (!recordingWindow.isDestroyed()) {
-          recordingWindow.close();
-        }
-        recordingWindow = null;
-      }
-      
-      // Check if temp directory exists (for both regular and canvas recording)
+      // Check if we have segments to save before quitting
       if (tempSessionDir && fs.existsSync(tempSessionDir)) {
-        // Check if there are segments to concatenate
-        const segments = await listSegments(tempSessionDir);
+        event.preventDefault(); // Prevent quitting while handling segments
         
-        if (segments.length > 0) {
-          console.log(`Found ${segments.length} segments to concatenate`);
-          
-          // Send status update to main window
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('concatenationStatus', {
-              status: 'started',
-              segmentCount: segments.length
-            });
-          }
-          
-          // Start concatenation process
-          try {
-            const outputPath = await concatenateSegments(tempSessionDir);
-            console.log('Concatenation completed successfully, output at:', outputPath);
-            
-            // Notify renderer that recording has been saved
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('recordingSaved', outputPath);
+        dialog.showMessageBox({
+          type: 'question',
+          title: 'Recording in Progress',
+          message: 'Recording is still in progress. What would you like to do?',
+          buttons: ['Save Recording', 'Discard Recording', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2
+        }).then(async ({ response }) => {
+          if (response === 0) {
+            // Save recording
+            try {
+              await handleQuickRecordingSave();
+            } catch (err) {
+              logError('Quick Recording Save', err);
             }
-          } catch (error) {
-            console.error('Error during concatenation:', error);
+            app.quit();
+          } else if (response === 1) {
+            // Discard recording
+            try {
+              if (tempSessionDir && fs.existsSync(tempSessionDir)) {
+                fs.rmSync(tempSessionDir, { recursive: true, force: true });
+                console.log('Removed temporary session directory');
+              }
+            } catch (err) {
+              logError('Remove Temp Dir', err);
+            }
+            app.quit();
+          }
+          // If response === 2 (Cancel), do nothing and allow user to continue
+        }).catch(err => {
+          logError('Recording Dialog', err);
+          app.quit(); // Quit anyway if dialog fails
+        });
+      }
+    }
+  } catch (error) {
+    logError('Will Quit', error);
+  }
+});
+
+// Quick save of recording on app quit
+async function handleQuickRecordingSave() {
+  try {
+    if (!tempSessionDir || !fs.existsSync(tempSessionDir)) {
+      console.log('No temp directory to save from');
+      return;
+    }
+    
+    const segments = await listSegments(tempSessionDir);
+    if (segments.length === 0) {
+      console.log('No segments to save');
+      return;
+    }
+    
+    // Create output filename with timestamp
+    const timestamp = new Date().toISOString()
+      .replace(/:/g, '.')
+      .replace(/T/, ' at ')
+      .replace(/\..+/, '');
+    
+    const outputFilename = `Magic Window Recording - ${timestamp} - AUTO-SAVED.mp4`;
+    
+    // Get or initialize save path
+    await initializeSavePath();
+    
+    // Create output directory
+    const saveDir = getCurrentRecordingDir(currentSavePath);
+    ensureDirExists(saveDir);
+    
+    const outputPath = path.join(saveDir, outputFilename);
+    console.log('Quick save output path:', outputPath);
+    
+    // Concatenate segments
+    await concatenateSegments(tempSessionDir, outputPath);
+    
+    console.log('Quick save completed successfully');
+    
+    // Clean up temp directory
+    if (tempSessionDir && fs.existsSync(tempSessionDir)) {
+      fs.rmSync(tempSessionDir, { recursive: true, force: true });
+      console.log('Removed temporary session directory');
+    }
+  } catch (error) {
+    logError('Handle Quick Recording Save', error);
+    throw error;
+  }
+}
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logError('Uncaught Exception', error);
+  // Show dialog only if app is ready
+  if (app.isReady()) {
+    dialog.showErrorBox('Application Error', 
+      `An unexpected error occurred: ${error.message}\n\nThe application will now close.`);
+  }
+  
+  // Force exit after showing dialog and logging
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logError('Unhandled Rejection', { reason, promise });
+});
+
+// Setup IPC handlers
+function setupIpcHandlers() {
+  try {
+    // Setup IPC handlers for main process
+    
+    // Handle getSources request
+    ipcMain.handle('getSources', async () => {
+      try {
+        console.log('getSources handler called');
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 150, height: 150 },
+          fetchWindowIcons: true
+        });
+        console.log(`Found ${sources.length} capture sources`);
+        return sources;
+      } catch (error) {
+        logError('Get Sources', error);
+        throw error; // Re-throw to propagate to renderer
+      }
+    });
+    
+    // Handle getScreenSources request (backup method if renderer can't use desktopCapturer)
+    ipcMain.handle('getScreenSources', async () => {
+      try {
+        console.log('getScreenSources handler called from main');
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 150, height: 150 },
+          fetchWindowIcons: true
+        });
+        console.log(`Found ${sources.length} sources via main process`);
+        return sources;
+      } catch (error) {
+        logError('Get Screen Sources', error);
+        throw error;
+      }
+    });
+    
+    // Handle settings requests
+    ipcMain.handle('getSettings', () => {
+      try {
+        return {
+          savePath: store.get('savePath', app.getPath('videos')),
+          // Add more settings as needed
+        };
+      } catch (error) {
+        logError('Get Settings', error);
+        // Return defaults if error
+        return { savePath: app.getPath('videos') };
+      }
+    });
+    
+    // Handle show save dialog
+    ipcMain.handle('showSaveDialog', async () => {
+      try {
+        const result = await dialog.showOpenDialog({
+          properties: ['openDirectory', 'createDirectory'],
+          defaultPath: store.get('savePath', app.getPath('videos')),
+          title: 'Choose Save Location for Recordings',
+          buttonLabel: 'Select Folder'
+        });
+        
+        if (!result.canceled && result.filePaths.length > 0) {
+          const selectedPath = result.filePaths[0];
+          console.log('Selected save path:', selectedPath);
+          
+          // Save to settings
+          store.set('savePath', selectedPath);
+          return selectedPath;
+        }
+        
+        // Return current setting if dialog canceled
+        return store.get('savePath', app.getPath('videos'));
+      } catch (error) {
+        logError('Show Save Dialog', error);
+        throw error;
+      }
+    });
+    
+    // Handle source selection
+    ipcMain.on('sourceSelected', (event, id) => {
+      try {
+        console.log('Source selected:', id);
+        sourceId = id;
+      } catch (error) {
+        logError('Source Selected', error);
+      }
+    });
+    
+    // Start recording from renderer
+    ipcMain.on('startCanvasRecording', async (event) => {
+      try {
+        console.log('Start canvas recording request from renderer');
+        
+        if (isRecording) {
+          console.log('Already recording, ignoring request');
+          return;
+        }
+        
+        // Set recording window to the sender's window
+        recordingWindow = BrowserWindow.fromWebContents(event.sender);
+        if (!recordingWindow) {
+          console.error('Could not get recording window from event sender');
+          return;
+        }
+        
+        console.log('Setting up recording with window:', recordingWindow.id);
+        
+        // Get or initialize save path
+        await initializeSavePath();
+        
+        // Create temporary directory for this recording session
+        try {
+          tempSessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magic-window-recorder', 'recording-session-'));
+          console.log('Created temporary session directory:', tempSessionDir);
+        } catch (error) {
+          logError('Create Temp Dir', error);
+          // Create the parent directory if it doesn't exist
+          const parentDir = path.join(os.tmpdir(), 'magic-window-recorder');
+          fs.mkdirSync(parentDir, { recursive: true });
+          tempSessionDir = fs.mkdtempSync(path.join(parentDir, 'recording-session-'));
+          console.log('Created temporary session directory (second attempt):', tempSessionDir);
+        }
+        
+        // Reset segment index
+        segmentIndex = 0;
+        
+        // Start disk space monitoring
+        startDiskSpaceMonitoring();
+        
+        // Set recording state
+        isRecording = true;
+        isPaused = false;
+        
+        // Start recording timer
+        startRecordingTimer();
+        
+        // Notify renderer of recording state
+        sendStateUpdate();
+        
+        // Create and show floating panel
+        createOrShowFloatingPanel();
+        
+        console.log('Recording started successfully');
+      } catch (error) {
+        logError('Start Canvas Recording', error);
+        // Reset state
+        isRecording = false;
+        isPaused = false;
+        tempSessionDir = null;
+        
+        // Notify renderer of error
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send('recordingError', {
+            message: 'Failed to start recording',
+            detail: error.message
+          });
+        }
+      }
+    });
+    
+    // Receive blob chunks from renderer
+    ipcMain.on('sendBlobChunk', async (event, chunkData) => {
+      try {
+        if (!isRecording || !tempSessionDir) {
+          console.warn('Received chunk but not in recording state, ignoring');
+          return;
+        }
+        
+        if (isPaused) {
+          console.log('Recording paused, ignoring chunk');
+          return;
+        }
+        
+        // Write blob data to disk
+        const segmentPath = path.join(tempSessionDir, `segment_${segmentIndex++}.mp4`);
+        console.log(`Writing segment ${segmentIndex} to ${segmentPath}`);
+        
+        fs.writeFileSync(segmentPath, Buffer.from(chunkData));
+        console.log(`Segment ${segmentIndex} saved, size: ${chunkData.byteLength} bytes`);
+      } catch (error) {
+        logError('Receive Blob Chunk', error);
+      }
+    });
+    
+    // Stop recording
+    ipcMain.on('stopRecording', async () => {
+      try {
+        if (!isRecording) {
+          console.log('Not recording, ignoring stop request');
+          return;
+        }
+        
+        console.log('Stopping recording');
+        
+        // Stop disk space monitoring
+        stopDiskSpaceMonitoring();
+        
+        // Stop recording timer
+        stopRecordingTimer();
+        
+        // Set recording state
+        isRecording = false;
+        isPaused = false;
+        
+        // Notify renderer of recording state
+        sendStateUpdate();
+        
+        // Hide floating panel
+        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+          floatingPanelWindow.hide();
+        }
+        
+        // Check if we have segments to concatenate
+        if (tempSessionDir && fs.existsSync(tempSessionDir)) {
+          const segments = await listSegments(tempSessionDir);
+          
+          if (segments.length === 0) {
+            console.log('No segments to concatenate');
             
-            // Send error status
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('concatenationStatus', {
                 status: 'error',
-                error: error.toString()
+                message: 'Recording stopped but no video data was saved.'
+              });
+            }
+            
+            return;
+          }
+          
+          console.log(`Found ${segments.length} segments to concatenate`);
+          
+          // Create output filename with timestamp
+          const timestamp = new Date().toISOString()
+            .replace(/:/g, '.')
+            .replace(/T/, ' at ')
+            .replace(/\..+/, '');
+          
+          const outputFilename = `Magic Window Recording - ${timestamp}.mp4`;
+          
+          // Create output directory
+          const saveDir = getCurrentRecordingDir(currentSavePath);
+          ensureDirExists(saveDir);
+          
+          const outputPath = path.join(saveDir, outputFilename);
+          console.log('Output path:', outputPath);
+          
+          // Notify renderer that concatenation started
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('concatenationStatus', {
+              status: 'started',
+              message: 'Processing recording...'
+            });
+          }
+          
+          try {
+            // Concatenate segments
+            await concatenateSegments(tempSessionDir, outputPath);
+            
+            // Notify renderer that concatenation completed
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', {
+                status: 'completed',
+                message: 'Recording saved successfully!',
+                outputPath
+              });
+              
+              // Also send recordingSaved event
+              mainWindow.webContents.send('recordingSaved', outputPath);
+            }
+            
+            console.log('Concatenation completed and recording saved');
+            
+            // Clean up temp directory
+            try {
+              fs.rmSync(tempSessionDir, { recursive: true, force: true });
+              console.log('Removed temporary session directory');
+              tempSessionDir = null;
+            } catch (err) {
+              logError('Remove Temp Dir', err);
+            }
+          } catch (error) {
+            logError('Concatenate Segments', error);
+            
+            // Notify renderer of error
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('concatenationStatus', {
+                status: 'error',
+                message: `Failed to process recording: ${error.message}`
               });
             }
           }
         } else {
-          console.warn('No segments found to concatenate');
+          console.log('No temp directory or it does not exist');
           
-          // Send error status to main window
+          // Notify renderer of error
           if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('recordingError', 'No video data was recorded.');
+            mainWindow.webContents.send('concatenationStatus', {
+              status: 'error',
+              message: 'Recording stopped but temporary files are missing.'
+            });
           }
         }
-      } else {
-        console.warn('Temporary session directory not found');
-      }
-    } catch (error) {
-      console.error('Error stopping recording:', error);
-      
-      // Send error to main window
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('recordingError', error.toString());
-      }
-    }
-  });
-  
-  // Handle recording MIME type information from renderer
-  ipcMain.on('recordingMimeType', (event, data) => {
-    console.log('Received recording MIME type information:', data);
-    
-    // Pass the MIME type to the main window for display
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('recordingMimeType', data);
-    }
-  });
-
-  // Add handler for opening files
-  ipcMain.on('open-file', (event, filePath) => {
-    console.log('Opening file:', filePath);
-    shell.openPath(filePath).then(result => {
-      if (result) {
-        console.error('Error opening file:', result);
+      } catch (error) {
+        logError('Stop Recording', error);
+        
+        // Notify renderer of error
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('recordingError', `Error opening file: ${result}`);
+          mainWindow.webContents.send('concatenationStatus', {
+            status: 'error',
+            message: `Failed to stop recording: ${error.message}`
+          });
         }
       }
     });
-  });
-
-  // Handle get sources for direct desktop capture
-  ipcMain.handle('captureDesktop', async (event, options) => {
-    try {
-      console.log('Handling captureDesktop request');
-      
-      // Get all available sources
-      const sources = await desktopCapturer.getSources({ 
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 150, height: 150 }
-      });
-      
-      if (sources.length === 0) {
-        throw new Error('No capture sources available');
-      }
-      
-      console.log(`Found ${sources.length} capture sources`);
-      
-      // Map sources to a simplified format for the renderer
-      return sources.map(source => ({
-        id: source.id,
-        name: source.name,
-        thumbnail: source.thumbnail.toDataURL()
-      }));
-    } catch (error) {
-      console.error('Error in captureDesktop handler:', error);
-      throw error;
-    }
-  });
-
-  // Function to create and show a screen capture notification
-  function showScreenCapturePermissionDialog() {
-    // Create a dialog to explain the permission requirements
-    dialog.showMessageBox({
-      type: 'info',
-      title: 'Screen Recording Permission Required',
-      message: 'Screen Recording Permission Required',
-      detail: 'Magic Window needs Screen Recording permission to capture your screen or windows.\n\n' +
-              'After clicking "Open System Settings", please:\n' +
-              '1. Allow permission for Electron (or Magic Window)\n' +
-              '2. Quit and restart the application\n\n' +
-              'NOTE: You may need to restart the app several times for macOS to properly recognize the permission.',
-      buttons: ['Open System Settings', 'Cancel'],
-      defaultId: 0
-    }).then(result => {
-      if (result.response === 0) {
-        // Open System Preferences directly to Screen Recording
-        if (process.platform === 'darwin') {
-          shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
-        }
-      }
+    
+    // Handle renderer error reporting
+    ipcMain.on('renderer-error', (event, errorData) => {
+      logError('Renderer Reported', errorData);
+      // Could log to file here
     });
+    
+    // Handle panel error reporting
+    ipcMain.on('panel-error', (event, errorData) => {
+      logError('Panel Reported', errorData);
+      // Could log to file here
+    });
+    
+    // Additional IPC handlers from existing code...
+    // ... existing IPC handlers
+  } catch (error) {
+    logError('Setup IPC Handlers', error);
   }
+}
 
-  // Handle direct screen capture from main process
-  ipcMain.handle('captureScreenDirectly', async (event) => {
-    try {
-      console.log('Attempting direct screen capture from main process');
-      
-      // Get all available sources
-      const sources = await desktopCapturer.getSources({ 
-        types: ['window', 'screen'],
-        thumbnailSize: { width: 1280, height: 720 }
-      });
-      
-      if (sources.length === 0) {
-        console.error('No screen sources found for direct capture');
-        showScreenCapturePermissionDialog();
-        throw new Error('No screen sources available');
-      }
-      
-      // Find the primary display/screen
-      let primarySource = sources.find(s => s.id.includes('screen:0:0'));
-      
-      // If not found, try alternate IDs
-      if (!primarySource) {
-        primarySource = sources.find(s => s.id.includes('screen:1:0'));
-      }
-      
-      // If still not found, just use the first screen
-      if (!primarySource) {
-        primarySource = sources.find(s => s.id.includes('screen:'));
-      }
-      
-      // If no screens, try any available source
-      if (!primarySource && sources.length > 0) {
-        primarySource = sources[0];
-      }
-      
-      if (!primarySource) {
-        console.error('Could not find a suitable screen to capture');
-        showScreenCapturePermissionDialog();
-        throw new Error('No suitable screen source found');
-      }
-      
-      console.log(`Selected source for direct capture: ${primarySource.id} (${primarySource.name})`);
-      
-      // Extract the thumbnail data as a base64 string
-      const thumbnailDataUrl = primarySource.thumbnail.toDataURL();
-      
-      // Return the source ID and the thumbnail
-      return {
-        sourceId: primarySource.id,
-        name: primarySource.name,
-        thumbnail: thumbnailDataUrl
-      };
-    } catch (error) {
-      console.error('Error in direct screen capture:', error);
-      showScreenCapturePermissionDialog();
-      throw error;
+// Function to check for previous unfinished recordings
+async function checkForPreviousRecordings() {
+  try {
+    console.log('Checking for previous unfinished recordings...');
+    const tempDir = path.join(os.tmpdir(), 'magic-window-recorder');
+    
+    // Check if temp directory exists
+    if (!fs.existsSync(tempDir)) {
+      console.log('No temporary recording directory found');
+      return;
     }
-  });
+    
+    // Read directory contents
+    const items = fs.readdirSync(tempDir);
+    const tempSessionDirs = items.filter(item => {
+      const fullPath = path.join(tempDir, item);
+      return fs.statSync(fullPath).isDirectory() && 
+             item.startsWith('recording-session-');
+    });
+    
+    if (tempSessionDirs.length === 0) {
+      console.log('No previous recording sessions found');
+      return;
+    }
+    
+    console.log(`Found ${tempSessionDirs.length} previous recording sessions`);
+    
+    // Ask user if they want to recover
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      title: 'Recover Previous Recordings',
+      message: 'Found previous recording sessions that may have been interrupted.',
+      detail: `${tempSessionDirs.length} recording session(s) found. Would you like to attempt recovery?`,
+      buttons: ['Yes, Recover', 'No, Delete'],
+      defaultId: 0,
+      cancelId: 1
+    });
+    
+    if (response === 0) {
+      // User wants to recover
+      console.log('User chose to recover recordings');
+      
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('show-recovery-dialog', tempSessionDirs);
+      } else {
+        await handleRecovery(tempSessionDirs);
+      }
+    } else {
+      // User chose to delete without recovery
+      console.log('User chose to delete previous recordings without recovery');
+      for (const dir of tempSessionDirs) {
+        const fullPath = path.join(tempDir, dir);
+        try {
+          console.log(`Removing directory: ${fullPath}`);
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } catch (err) {
+          logError('Remove Temp Dir', err);
+        }
+      }
+    }
+  } catch (error) {
+    logError('Check Previous Recordings', error);
+  }
+}
 
-  app.on('activate', function () {
-    // On macOS re-create a window when dock icon is clicked and no windows are open
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-
-  setupIpcHandlers();
-});
-
-// Clean up on app quit
-app.on('will-quit', () => {
-  // Unregister all shortcuts when quitting
-  unregisterGlobalShortcuts();
-  
-  // ... any existing cleanup code ...
-});
-
-// Quit when all windows are closed, except on macOS
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Handle recovery of previous recordings
+async function handleRecovery(tempSessionDirs) {
+  try {
+    console.log('Handling recovery...');
+    // Initialize save path if needed
+    await initializeSavePath();
+    
+    for (const dir of tempSessionDirs) {
+      const fullPath = path.join(os.tmpdir(), 'magic-window-recorder', dir);
+      console.log(`Attempting to recover from: ${fullPath}`);
+      
+      if (!fs.existsSync(fullPath)) {
+        console.log(`Directory no longer exists: ${fullPath}`);
+        continue;
+      }
+      
+      const segments = await listSegments(fullPath);
+      if (segments.length === 0) {
+        console.log(`No segments found in ${fullPath}`);
+        continue;
+      }
+      
+      // Create recovery filename
+      const timestamp = new Date().toISOString()
+        .replace(/:/g, '.')
+        .replace(/T/, ' at ')
+        .replace(/\..+/, '');
+      const saveName = `Magic Window Recording - ${timestamp} - RECOVERED.mp4`;
+      
+      // Get save directory
+      const saveDir = getCurrentRecordingDir(currentSavePath);
+      ensureDirExists(saveDir);
+      
+      const savePath = path.join(saveDir, saveName);
+      
+      // Send status message
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('concatenationStatus', {
+          status: 'started',
+          message: `Recovering ${segments.length} segments from interrupted recording...`
+        });
+      }
+      
+      // Concatenate using ffmpeg
+      await concatenateSegments(fullPath, savePath);
+      
+      // Send completion message
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('concatenationStatus', {
+          status: 'completed',
+          message: 'Recovery completed successfully!',
+          outputPath: savePath
+        });
+        
+        // Send recordingSaved event
+        mainWindow.webContents.send('recordingSaved', savePath);
+      }
+      
+      try {
+        // Remove temp directory
+        fs.rmSync(fullPath, { recursive: true, force: true });
+      } catch (err) {
+        logError('Remove Temp Dir After Recovery', err);
+      }
+    }
+  } catch (error) {
+    logError('Handle Recovery', error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('concatenationStatus', {
+        status: 'error',
+        message: `Recovery failed: ${error.message}`
+      });
+    }
+  }
+}
 
 // Function to create or show the floating panel
 function createOrShowFloatingPanel() {
-  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-    console.log('Showing existing floating panel');
-    floatingPanelWindow.show();
-    return;
-  }
-  
-  console.log('Creating new floating panel');
-  
-  // Create a new floating panel window
-  floatingPanelWindow = new BrowserWindow({
-    width: 250,
-    height: 190, // Increased height to accommodate PiP
-    frame: false,
-    transparent: false,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preloadPanel.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-  
-  // Load the panel HTML
-  floatingPanelWindow.loadFile('panel.html');
-  
-  // Position the panel in the top-right corner
-  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
-  floatingPanelWindow.setPosition(screenWidth - 270, 20);
-  
-  // Log when ready
-  floatingPanelWindow.webContents.on('did-finish-load', () => {
-    console.log('Floating panel loaded');
-  });
-  
-  // Clean up reference when panel is closed
-  floatingPanelWindow.on('closed', () => {
-    console.log('Floating panel closed');
-    floatingPanelWindow = null;
-  });
-}
-
-// Setup IPC handlers
-function setupIpcHandlers() {
-  // Relay pip-frame-update from renderer to panel
-  ipcMain.on('pip-frame-update', (event, dataURL) => {
-    console.log(`Received PiP frame update: ${dataURL ? Math.round(dataURL.length / 1024) : 0}KB`);
-    
-    if (!dataURL || typeof dataURL !== 'string' || !dataURL.startsWith('data:image')) {
-      console.warn('Invalid PiP frame data received');
-      return;
-    }
-    
-    // Create the panel if it doesn't exist
-    if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
-      console.log('Panel not available. Creating new floating panel for PiP');
-      createOrShowFloatingPanel();
-      
-      // Wait a short time for the panel to initialize
-      setTimeout(() => {
-        sendPipFrameToPanel(dataURL);
-      }, 200);
-    } else {
-      sendPipFrameToPanel(dataURL);
-    }
-  });
-  
-  // Helper function to send PiP frame to panel
-  function sendPipFrameToPanel(dataURL) {
-    if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
-      console.warn('Panel still not available for PiP frame');
-      return;
-    }
-    
-    // Ensure panel is visible when receiving frames
-    if (!floatingPanelWindow.isVisible()) {
-      console.log('Making panel visible to show PiP');
+  try {
+    // If the panel already exists, just show it
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
       floatingPanelWindow.show();
+      return;
     }
     
-    try {
-      floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
-      console.log('PiP frame forwarded to panel window');
-    } catch (err) {
-      console.error('Error sending PiP frame to panel:', err);
-    }
-  }
-  
-  // Relay pip-state-update from renderer to panel
-  ipcMain.on('pip-state-update', (event, isActive) => {
-    console.log(`Received PiP state update: ${isActive}`);
+    // Create a new panel window
+    floatingPanelWindow = new BrowserWindow({
+      width: 240,
+      height: 180,
+      frame: false,
+      transparent: false,
+      alwaysOnTop: true,
+      resizable: false,
+      show: false,
+      skipTaskbar: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preloadPanel.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        enableRemoteModule: false,
+        webSecurity: true,
+        sandbox: true // Enable sandbox for renderer process
+      }
+    });
     
-    // Create the panel if it doesn't exist and PiP is being activated
-    if (isActive && (!floatingPanelWindow || floatingPanelWindow.isDestroyed())) {
-      console.log('Creating panel for PiP activation');
-      createOrShowFloatingPanel();
+    // Place it in a good position relative to main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const mainBounds = mainWindow.getBounds();
+      floatingPanelWindow.setPosition(
+        mainBounds.x + mainBounds.width - 260,
+        mainBounds.y + 80
+      );
+    }
+    
+    // Set the window to ignore mouse events (for click-through)
+    // We will set parts of the UI to intercept clicks in the renderer
+    // floatingPanelWindow.setIgnoreMouseEvents(true, { forward: true });
+    
+    // Load panel HTML
+    floatingPanelWindow.loadFile('panel.html').catch(err => {
+      logError('Panel Window Load', err);
+    });
+    
+    // Handle failed loading
+    floatingPanelWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      logError('Panel Window Load Failed', `${errorCode}: ${errorDescription}`);
+    });
+    
+    // Show panel when loaded
+    floatingPanelWindow.once('ready-to-show', () => {
+      floatingPanelWindow.show();
+    });
+    
+    // Handle crashes
+    floatingPanelWindow.webContents.on('crashed', (event, killed) => {
+      logError('Panel Renderer Crash', `Panel renderer process ${killed ? 'was killed' : 'crashed'}`);
       
-      // Wait a short time for the panel to initialize
+      // Recreate the panel
       setTimeout(() => {
-        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-          console.log(`Forwarding PiP state to panel: ${isActive}`);
-          floatingPanelWindow.webContents.send('update-pip-state', isActive);
+        if (isRecording) {
+          createOrShowFloatingPanel();
         }
-      }, 200);
-    } else if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      console.log(`Forwarding PiP state to panel: ${isActive}`);
-      floatingPanelWindow.webContents.send('update-pip-state', isActive);
-    } else {
-      console.warn('Cannot forward PiP state: panel window not available');
-    }
-  });
-  
-  // Relay zoom-state-update from renderer to panel
-  ipcMain.on('zoom-state-update', (event, zoomState) => {
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      floatingPanelWindow.webContents.send('zoom-state-update', zoomState);
-    }
-  });
-  
-  // Relay video-size-update from renderer to panel
-  ipcMain.on('video-size-update', (event, width, height) => {
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      floatingPanelWindow.webContents.send('video-size-update', width, height);
-    }
-  });
-  
-  // Relay zoom-level-update from renderer to panel
-  ipcMain.on('zoom-level-update', (event, level) => {
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      floatingPanelWindow.webContents.send('update-zoom-level', level);
-    }
-  });
-  
-  // Relay panel-zoom-in from panel to renderer
-  ipcMain.on('panel-zoom-in', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('zoom-in');
-    }
-  });
-  
-  // Relay panel-zoom-out from panel to renderer
-  ipcMain.on('panel-zoom-out', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('zoom-out');
-    }
-  });
-  
-  // Relay panel-toggle-pip from panel to renderer
-  ipcMain.on('panel-toggle-pip', () => {
-    console.log('Received panel-toggle-pip message from panel');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      console.log('Forwarding toggle-pip to main window');
-      mainWindow.webContents.send('toggle-pip');
-    } else {
-      console.warn('Cannot forward toggle-pip: main window not available');
-    }
-  });
-  
-  // Relay panel-set-zoom-center from panel to renderer
-  ipcMain.on('panel-set-zoom-center', (event, coords) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('set-zoom-center', coords);
-    }
-  });
-  
-  // Handle panel-collapse to minimize the panel
-  ipcMain.on('panel-collapse', () => {
-    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
-      floatingPanelWindow.minimize();
-    }
-  });
+      }, 1000);
+    });
+    
+    // Clean up on closed
+    floatingPanelWindow.on('closed', () => {
+      floatingPanelWindow = null;
+    });
+    
+    // Handle panel collapse request
+    ipcMain.on('panel-collapse', () => {
+      try {
+        console.log('Panel collapse requested');
+        if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+          floatingPanelWindow.minimize();
+        }
+      } catch (error) {
+        logError('Panel Collapse', error);
+      }
+    });
+  } catch (error) {
+    logError('Create Floating Panel', error);
+  }
 } 

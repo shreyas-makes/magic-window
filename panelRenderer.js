@@ -1,3 +1,21 @@
+// Global error handler
+window.addEventListener('error', (event) => {
+  console.error('Uncaught error:', event.error);
+  
+  try {
+    // Report error to main process if panelAPI is available
+    if (window.panelAPI && window.panelAPI.reportError) {
+      window.panelAPI.reportError({
+        message: event.error ? event.error.message : 'Unknown panel error',
+        stack: event.error ? event.error.stack : '',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('Error in error handler:', error);
+  }
+});
+
 // Get DOM elements
 const zoomLevelDisplay = document.getElementById('zoom-level');
 const zoomInButton = document.getElementById('zoom-in');
@@ -606,180 +624,195 @@ function handleZoomStateUpdate(newZoomState) {
     updateZoomRectangle();
 }
 
-// Set up event listeners for buttons
-let lastButtonClickTime = 0;
-const BUTTON_DEBOUNCE_TIME = 250; // ms
-
-zoomInButton.addEventListener('click', () => {
-    console.log('Zoom in clicked');
-    window.panelAPI.zoomIn();
-});
-
-zoomOutButton.addEventListener('click', () => {
-    console.log('Zoom out clicked');
-    window.panelAPI.zoomOut();
-});
-
-togglePipButton.addEventListener('click', () => {
-    // Debounce rapid clicks
-    const now = performance.now();
-    if (now - lastButtonClickTime < BUTTON_DEBOUNCE_TIME) {
-        console.log('Ignoring PiP toggle click - too soon after previous click');
-        return;
-    }
-    lastButtonClickTime = now;
-    
-    console.log('Toggle PiP clicked, current state:', isPipActive);
-    window.panelAPI.togglePip();
-});
-
-collapseButton.addEventListener('click', () => {
-    console.log('Collapse clicked');
-    window.panelAPI.collapse();
-});
-
-// PiP canvas interaction events
-pipCanvas.addEventListener('mousedown', (event) => {
-    if (!isPipActive) return;
-    
-    isDraggingPip = true;
-    
-    // Get click position relative to the canvas
-    const rect = pipCanvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    // Convert to video coordinates
-    const videoCoords = pipToVideoCoordinates(x, y);
-    
-    // Send new center coordinates to main renderer
-    window.panelAPI.setZoomCenter(videoCoords.x, videoCoords.y);
-});
-
-pipCanvas.addEventListener('mousemove', (event) => {
-    if (!isPipActive || !isDraggingPip) return;
-    
-    // Get mouse position relative to the canvas
-    const rect = pipCanvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    // Convert to video coordinates
-    const videoCoords = pipToVideoCoordinates(x, y);
-    
-    // Send new center coordinates to main renderer
-    window.panelAPI.setZoomCenter(videoCoords.x, videoCoords.y);
-});
-
-pipCanvas.addEventListener('mouseup', () => {
-    isDraggingPip = false;
-});
-
-pipCanvas.addEventListener('mouseleave', () => {
-    isDraggingPip = false;
-});
-
-// Initialize - start with Canvas2D for reliability
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('Panel DOM loaded');
-    
-    // First initialize with Canvas2D for reliability
-    initializeCanvas2D();
-    
-    // Then try to load PIXI.js
+// Register event handlers with error handling
+function registerButtonHandlers() {
     try {
-        // Load PIXI.js from CDN
-        const pixiScript = document.createElement('script');
-        pixiScript.src = 'https://cdn.jsdelivr.net/npm/pixi.js@6.5.8/dist/browser/pixi.min.js';
-        pixiScript.onload = () => {
-            console.log('PIXI.js loaded successfully');
-            // Wait a bit to make sure PIXI is fully initialized
-            setTimeout(() => {
-                try {
-                    if (typeof PIXI !== 'undefined') {
-                        console.log('PIXI is defined, version:', PIXI.VERSION);
-                        initializePixiCanvas();
-                    } else {
-                        console.warn('PIXI is not defined after script load');
-                    }
-                } catch (err) {
-                    console.error('Error initializing PIXI after load:', err);
-                }
-            }, 100);
-        };
-        pixiScript.onerror = (err) => {
-            console.error('Failed to load PIXI.js:', err);
-            // Already using Canvas2D
-        };
-        document.head.appendChild(pixiScript);
-    } catch (err) {
-        console.error('Error loading PIXI.js:', err);
-        // Already using Canvas2D
+        // Zoom In button
+        zoomInButton.addEventListener('click', () => {
+            try {
+                debugLog('Zoom In button clicked');
+                window.panelAPI.zoomIn();
+            } catch (error) {
+                console.error('Error in Zoom In handler:', error);
+            }
+        });
+        
+        // Zoom Out button
+        zoomOutButton.addEventListener('click', () => {
+            try {
+                debugLog('Zoom Out button clicked');
+                window.panelAPI.zoomOut();
+            } catch (error) {
+                console.error('Error in Zoom Out handler:', error);
+            }
+        });
+        
+        // Toggle PiP button
+        togglePipButton.addEventListener('click', () => {
+            try {
+                debugLog('Toggle PiP button clicked');
+                window.panelAPI.togglePip();
+            } catch (error) {
+                console.error('Error in Toggle PiP handler:', error);
+            }
+        });
+        
+        // Collapse button
+        collapseButton.addEventListener('click', () => {
+            try {
+                debugLog('Collapse button clicked');
+                window.panelAPI.collapse();
+            } catch (error) {
+                console.error('Error in Collapse handler:', error);
+            }
+        });
+        
+        // PiP Canvas mouse events for interaction
+        pipCanvas.addEventListener('mousedown', (event) => {
+            try {
+                debugLog('PiP canvas mousedown');
+                if (!isPipActive) return;
+                isDraggingPip = true;
+                
+                // Calculate coordinates
+                const rect = pipCanvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+                // Convert to video coordinates
+                const coords = pipToVideoCoordinates(x, y);
+                
+                // Send to main process
+                window.panelAPI.setZoomCenter(coords.x, coords.y);
+            } catch (error) {
+                console.error('Error in PiP mousedown handler:', error);
+            }
+        });
+        
+        pipCanvas.addEventListener('mousemove', (event) => {
+            try {
+                if (!isDraggingPip) return;
+                
+                // Calculate coordinates
+                const rect = pipCanvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+                // Convert to video coordinates
+                const coords = pipToVideoCoordinates(x, y);
+                
+                // Send to main process
+                window.panelAPI.setZoomCenter(coords.x, coords.y);
+            } catch (error) {
+                console.error('Error in PiP mousemove handler:', error);
+            }
+        });
+        
+        // Global mouse up to handle dragging ending outside the canvas
+        window.addEventListener('mouseup', () => {
+            try {
+                isDraggingPip = false;
+            } catch (error) {
+                console.error('Error in window mouseup handler:', error);
+            }
+        });
+        
+        debugLog('Button handlers registered');
+    } catch (error) {
+        console.error('Error registering button handlers:', error);
     }
-    
-    // Set initial UI state
-    updateZoomLevelDisplay(currentZoomLevel);
-    
-    // Make sure we initialize PiP state properly
-    // Setting to false first to ensure a clean state
-    isPipActive = false;
-    updatePipState(isPipActive);
-    
-    // Register the panel API event handlers
-    registerPanelAPIHandlers();
-    
-    console.log('Panel initialization complete');
-});
+}
 
-// Register the panel API event handlers
+// Register API handlers with error handling
 function registerPanelAPIHandlers() {
-    debugLog('Registering panel API handlers');
-    
-    // Register zoom level updates from main process
-    window.panelAPI.onUpdateZoomLevel((level) => {
-        debugLog(`Received zoom level update: ${level}`);
-        updateZoomLevelDisplay(level);
-    });
-    
-    // Register PiP state updates from main process
-    window.panelAPI.onUpdatePipState((isActive) => {
-        debugLog(`Received PiP state update: ${isActive}`, true);
+    try {
+        // Zoom level updates
+        window.panelAPI.onUpdateZoomLevel((level) => {
+            try {
+                updateZoomLevelDisplay(level);
+            } catch (error) {
+                console.error('Error in onUpdateZoomLevel handler:', error);
+            }
+        });
         
-        // Force a visible update if state has changed
-        if (isPipActive !== isActive) {
-            updatePipState(isActive);
+        // PiP state updates
+        window.panelAPI.onUpdatePipState((isActive) => {
+            try {
+                updatePipState(isActive);
+            } catch (error) {
+                console.error('Error in onUpdatePipState handler:', error);
+            }
+        });
+        
+        // PiP frame updates
+        window.panelAPI.onPipFrameUpdate((dataURL) => {
+            try {
+                displayPipFrame(dataURL);
+            } catch (error) {
+                console.error('Error in onPipFrameUpdate handler:', error);
+            }
+        });
+        
+        // Video size updates
+        window.panelAPI.onVideoSizeUpdate((width, height) => {
+            try {
+                videoWidth = width;
+                videoHeight = height;
+                debugLog(`Video size updated to ${width}x${height}`);
+            } catch (error) {
+                console.error('Error in onVideoSizeUpdate handler:', error);
+            }
+        });
+        
+        // Zoom state updates
+        window.panelAPI.onZoomStateUpdate((newZoomState) => {
+            try {
+                handleZoomStateUpdate(newZoomState);
+            } catch (error) {
+                console.error('Error in onZoomStateUpdate handler:', error);
+            }
+        });
+        
+        debugLog('Panel API handlers registered');
+    } catch (error) {
+        console.error('Error registering Panel API handlers:', error);
+    }
+}
+
+// Initialize with error handling
+function initializePanel() {
+    try {
+        debugLog('Initializing PiP panel');
+        
+        // First try to initialize PIXI canvas
+        if (typeof PIXI !== 'undefined') {
+            if (initializePixiCanvas()) {
+                debugLog('Successfully initialized PiP with PIXI.js');
+            } else {
+                debugLog('Failed to initialize with PIXI.js, falling back to Canvas 2D');
+                initializeCanvas2D();
+            }
         } else {
-            debugLog('PiP state unchanged, no update needed');
-        }
-    });
-    
-    // Register PiP frame updates from main process
-    window.panelAPI.onPipFrameUpdate((dataURL) => {
-        debugLog(`Received PiP frame update: ${Math.round(dataURL?.length / 1024) || 0}KB`);
-        
-        // Make sure the panel shows when we receive frames
-        if (!isPipActive) {
-            debugLog('Activating PiP state because frame was received', true);
-            updatePipState(true);
+            debugLog('PIXI.js not available, using Canvas 2D');
+            initializeCanvas2D();
         }
         
-        // Display the frame
-        displayPipFrame(dataURL);
-    });
-    
-    // Register video size updates
-    window.panelAPI.onVideoSizeUpdate((width, height) => {
-        debugLog(`Received video size update: ${width}x${height}`);
-        videoWidth = width;
-        videoHeight = height;
-        updateZoomRectangle();
-    });
-    
-    // Register zoom state updates
-    window.panelAPI.onZoomStateUpdate((newZoomState) => {
-        debugLog(`Received zoom state update: zoom=${newZoomState.zoom}`);
-        handleZoomStateUpdate(newZoomState);
-    });
-    
-    debugLog('Panel API handlers registered');
-} 
+        // Register event handlers
+        registerButtonHandlers();
+        registerPanelAPIHandlers();
+        
+        debugLog('Panel initialization complete');
+    } catch (error) {
+        console.error('Error initializing panel:', error);
+        
+        // Try to use the most basic rendering as fallback
+        try {
+            initializeCanvas2D();
+        } catch (fallbackError) {
+            console.error('Critical: Even fallback initialization failed:', fallbackError);
+        }
+    }
+}
+
+// Start initialization
+initializePanel(); 

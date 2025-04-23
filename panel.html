@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Magic Window Controls</title>
@@ -84,24 +84,24 @@
         }
     </style>
 </head>
-<body>
-    <div class="controls">
+<body role="application" aria-label="Magic Window Controls Panel">
+    <div class="controls" role="toolbar" aria-label="Zoom Controls">
         <div id="zoom-controls">
-            <button id="zoom-out">-</button>
-            <span id="zoom-level">1.0x</span>
-            <button id="zoom-in">+</button>
+            <button id="zoom-out" aria-label="Zoom Out">-</button>
+            <span id="zoom-level" role="status" aria-live="polite" aria-label="Current zoom level">1.0x</span>
+            <button id="zoom-in" aria-label="Zoom In">+</button>
         </div>
         
-        <button id="toggle-pip">PiP</button>
+        <button id="toggle-pip" aria-label="Toggle Picture in Picture view" aria-pressed="false">PiP</button>
         
         <div id="window-controls">
-            <button id="collapse">_</button>
+            <button id="collapse" aria-label="Minimize panel">_</button>
         </div>
     </div>
     
-    <div id="pip-container">
-        <canvas id="pip-canvas"></canvas>
-        <div id="zoom-rectangle"></div>
+    <div id="pip-container" role="region" aria-label="Picture in Picture Navigation">
+        <canvas id="pip-canvas" aria-label="Overview of recording area. Click to move focus."></canvas>
+        <div id="zoom-rectangle" aria-hidden="true"></div>
     </div>
 
     <script src="panelRenderer.js"></script>

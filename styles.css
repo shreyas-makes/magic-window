@@ -679,4 +679,24 @@ h1 {
 
 .pending {
   color: #f39c12;
+}
+
+/* Add styles for performance warning banner */
+.warning-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background-color: rgba(255, 147, 0, 0.9);
+  color: white;
+  padding: 10px;
+  text-align: center;
+  font-weight: bold;
+  z-index: 1000;
+  animation: fadein 0.5s;
+}
+
+@keyframes fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 } 

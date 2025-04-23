@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;">
@@ -8,84 +8,89 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
+  <div class="container" role="main">
     <h1 class="title">Magic Window Recorder</h1>
-    <div id="status" class="status">Initializing...</div>
+    <div id="status" class="status" role="status" aria-live="polite">Initializing...</div>
     
     <!-- Canvas container for Pixi.js -->
     <div class="section canvas-container">
       <div class="canvas-wrapper">
-        <canvas id="main-canvas" width="3840" height="2160"></canvas>
+        <canvas id="main-canvas" width="3840" height="2160" aria-label="Recording preview canvas"></canvas>
         <video id="source-video" autoplay muted playsinline
           style="position: absolute; top: 10px; right: 10px; width: 320px; height: 180px; z-index: 1000; object-fit: contain; background: #000; border: 1px solid #333;"
+          aria-hidden="true"
         ></video>
       </div>
     </div>
     
     <!-- Zoom Controls Section -->
     <div class="section zoom-controls">
-      <h2 class="section-title">Zoom Controls</h2>
-      <div class="controls button-group">
-        <button id="zoom-in" class="btn">Zoom In (2x)</button>
-        <button id="zoom-out" class="btn">Reset Zoom (1x)</button>
-        <button id="move-top-left" class="btn">Move to Top-Left</button>
-        <button id="move-center" class="btn">Move to Center</button>
+      <h2 class="section-title" id="zoom-controls-heading">Zoom Controls</h2>
+      <div class="controls button-group" role="group" aria-labelledby="zoom-controls-heading">
+        <button id="zoom-in" class="btn" aria-label="Zoom In to 2x magnification">Zoom In (2x)</button>
+        <button id="zoom-out" class="btn" aria-label="Reset Zoom to 1x">Reset Zoom (1x)</button>
+        <button id="move-top-left" class="btn" aria-label="Move view to Top Left corner">Move to Top-Left</button>
+        <button id="move-center" class="btn" aria-label="Move view to Center">Move to Center</button>
       </div>
     </div>
     
     <div class="section source-selection">
-      <h2 class="section-title">Select Recording Source</h2>
+      <h2 class="section-title" id="source-selection-heading">Select Recording Source</h2>
       <div class="controls">
-        <select id="sourceSelect" class="full-width">
+        <select id="sourceSelect" class="full-width" aria-labelledby="source-selection-heading">
           <option value="">-- Select a source --</option>
         </select>
-        <button id="refreshSources" class="btn">Refresh Sources</button>
+        <button id="refreshSources" class="btn" aria-label="Refresh list of recording sources">Refresh Sources</button>
       </div>
     </div>
     
     <div class="section save-location">
-      <h2 class="section-title">Save Location</h2>
+      <h2 class="section-title" id="save-location-heading">Save Location</h2>
       <div class="controls">
-        <div id="currentSavePath" class="save-path full-width">Loading...</div>
-        <button id="changeSaveLocation" class="btn">Change...</button>
+        <div id="currentSavePath" class="save-path full-width" aria-labelledby="save-location-heading" role="status" aria-live="polite">Loading...</div>
+        <button id="changeSaveLocation" class="btn" aria-label="Change save location folder">Change...</button>
       </div>
     </div>
     
     <div class="section disk-space">
-      <h2 class="section-title">Disk Space</h2>
+      <h2 class="section-title" id="disk-space-heading">Disk Space</h2>
       <div class="disk-space-container">
-        <div class="disk-space-bar">
+        <div class="disk-space-bar" role="progressbar" aria-labelledby="disk-space-heading" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
           <div id="diskSpaceUsed" class="disk-space-used" style="width: 0%;"></div>
         </div>
-        <div id="disk-space-status" class="status">Checking available space...</div>
+        <div id="disk-space-status" class="status" role="status" aria-live="polite">Checking available space...</div>
       </div>
     </div>
     
     <div class="section recording-controls">
-      <h2 class="section-title">Recording Controls</h2>
-      <div class="controls button-group">
-        <button id="startRecording" class="btn primary" disabled>Start Recording</button>
-        <button id="pauseRecording" class="btn" disabled>Pause</button>
-        <button id="resumeRecording" class="btn" disabled>Resume</button>
-        <button id="stopRecording" class="btn danger" disabled>Stop Recording</button>
+      <h2 class="section-title" id="recording-controls-heading">Recording Controls</h2>
+      <div class="controls button-group" role="group" aria-labelledby="recording-controls-heading">
+        <button id="startRecording" class="btn primary" disabled aria-label="Start Recording">Start Recording</button>
+        <button id="pauseRecording" class="btn" disabled aria-label="Pause Recording">Pause</button>
+        <button id="resumeRecording" class="btn" disabled aria-label="Resume Recording">Resume</button>
+        <button id="stopRecording" class="btn danger" disabled aria-label="Stop Recording">Stop Recording</button>
       </div>
     </div>
     
     <div class="section recording-status">
-      <div id="recordingMessage" class="message"></div>
-      <div id="timer-display" class="timer">00:00:00</div>
+      <div id="recordingMessage" class="message" role="status" aria-live="assertive"></div>
+      <div id="timer-display" class="timer" role="timer" aria-label="Recording timer" aria-live="polite">00:00:00</div>
+    </div>
+
+    <div id="performance-warning" class="warning-banner" role="alert" aria-live="assertive" style="display: none;">
+      Performance issues detected. Recording quality may be affected.
     </div>
 
     <div class="control-panel">
-      <h3>Screen Capture Controls</h3>
-      <div class="button-group">
-        <button id="startBtn" class="btn primary">Start Recording</button>
-        <button id="stopBtn" class="btn danger" disabled>Stop Recording</button>
-        <button id="captureBtn" class="btn info">Static Capture</button>
-        <button id="directCaptureBtn" class="btn secondary">Capture Screen (macOS Fix)</button>
-        <button id="togglePipBtn" class="btn info">Toggle PiP</button>
+      <h3 id="screen-capture-heading">Screen Capture Controls</h3>
+      <div class="button-group" role="group" aria-labelledby="screen-capture-heading">
+        <button id="startBtn" class="btn primary" aria-label="Start Recording">Start Recording</button>
+        <button id="stopBtn" class="btn danger" disabled aria-label="Stop Recording">Stop Recording</button>
+        <button id="captureBtn" class="btn info" aria-label="Take Static Capture">Static Capture</button>
+        <button id="directCaptureBtn" class="btn secondary" aria-label="Capture Screen with macOS Fix">Capture Screen (macOS Fix)</button>
+        <button id="togglePipBtn" class="btn info" aria-label="Toggle Picture in Picture view">Toggle PiP</button>
       </div>
-      <div id="status" class="status">Ready to record</div>
+      <div id="status" class="status" role="status" aria-live="polite">Ready to record</div>
     </div>
   </div>
 
