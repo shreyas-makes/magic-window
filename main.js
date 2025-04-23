@@ -68,6 +68,7 @@ let isRecording = false;
 let isPaused = false;
 let recordingWindow = null;
 let mainWindow = null; // Global reference to main window
+let floatingPanelWindow = null; // Global reference to floating panel window
 let currentSavePath = null;
 let tempSessionDir = null; // For storing temporary session directory
 let segmentIndex = 0; // For tracking segment numbers
@@ -748,6 +749,9 @@ app.whenReady().then(() => {
     }
     
     try {
+      // Create or show the floating panel window
+      createOrShowFloatingPanel();
+      
       // Check disk space before starting
       await checkDiskSpaceAvailable();
       
@@ -965,6 +969,12 @@ app.whenReady().then(() => {
     if (!isRecording) {
       console.warn('Not recording, nothing to stop.');
       return;
+    }
+    
+    // Hide the floating panel if it exists
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      console.log('Hiding floating panel window');
+      floatingPanelWindow.hide();
     }
     
     // Set recording state
@@ -1197,4 +1207,80 @@ app.on('will-quit', () => {
 // Quit when all windows are closed, except on macOS
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Function to create or show the floating panel
+function createOrShowFloatingPanel() {
+  if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
+    console.log('Creating new floating panel window');
+    
+    // Create the floating panel window
+    floatingPanelWindow = new BrowserWindow({
+      width: 250,
+      height: 80,
+      frame: false,
+      alwaysOnTop: true,
+      resizable: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preloadPanel.js'),
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    
+    // Load the panel HTML file
+    floatingPanelWindow.loadFile('panel.html');
+    
+    // Handle panel closure
+    floatingPanelWindow.on('closed', () => {
+      console.log('Floating panel window closed');
+      floatingPanelWindow = null;
+    });
+  } else {
+    console.log('Showing existing floating panel window');
+    floatingPanelWindow.show();
+  }
+}
+
+// Add these IPC handlers for panel communication
+// Handle zoom level update from renderer
+ipcMain.on('zoom-level-update', (event, level) => {
+  console.log('Received zoom level update:', level);
+  // Forward to panel window if it exists
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    floatingPanelWindow.webContents.send('update-zoom-level', level);
+  }
+});
+
+// Handle panel zoom in command
+ipcMain.on('panel-zoom-in', (event) => {
+  console.log('Received panel zoom in command');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('zoom-in');
+  }
+});
+
+// Handle panel zoom out command
+ipcMain.on('panel-zoom-out', (event) => {
+  console.log('Received panel zoom out command');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('zoom-out');
+  }
+});
+
+// Handle panel toggle PiP command
+ipcMain.on('panel-toggle-pip', (event) => {
+  console.log('Received panel toggle PiP command');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('toggle-pip');
+  }
+});
+
+// Handle panel collapse command
+ipcMain.on('panel-collapse', (event) => {
+  console.log('Received panel collapse command');
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    // For now, just minimize the panel
+    floatingPanelWindow.minimize();
+  }
 }); 

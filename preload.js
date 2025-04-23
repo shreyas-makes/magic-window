@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Register handler for IPC events from main process
   on: (channel, func) => {
     // Only allow certain channels to be received
-    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus', 'recordingLimitReached'];
+    let validChannels = ['pong', 'updateState', 'recordingError', 'recordingSaved', 'recordingMimeType', 'hotkey-start-recording', 'diskSpaceWarning', 'concatenationStatus', 'recordingLimitReached', 'zoom-in', 'zoom-out', 'toggle-pip'];
     if (validChannels.includes(channel)) {
       console.log('Registering handler for channel:', channel);
       
@@ -131,5 +131,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Recording limit reached handler
   onRecordingLimitReached: (callback) => {
     ipcRenderer.on('recordingLimitReached', (event) => callback());
+  },
+  // Send zoom level update to main process
+  sendZoomLevelUpdate: (level) => {
+    console.log('Sending zoom level update:', level);
+    ipcRenderer.send('zoom-level-update', level);
   }
 }); 

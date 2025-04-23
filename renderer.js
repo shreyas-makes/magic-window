@@ -1052,8 +1052,8 @@ function setZoom(level, centerX, centerY, duration = 0.3) {
     centerX = Math.min(Math.max(parseFloat(centerX) || videoWidth / 2, 0), videoWidth);
     centerY = Math.min(Math.max(parseFloat(centerY) || videoHeight / 2, 0), videoHeight);
     
-    // Ensure zoom level is reasonable (between 1.0 and 5.0)
-    level = Math.min(Math.max(level, 1.0), 5.0);
+    // Ensure zoom level is reasonable (between 0.5 and 5.0)
+    level = Math.min(Math.max(level, 0.5), 5.0);
     
     // Set target values
     state.targetZoom = level;
@@ -1074,9 +1074,15 @@ function setZoom(level, centerX, centerY, duration = 0.3) {
             if (Math.random() < 0.01) {  // Limit logging to 1% of updates
                 console.log(`Zoom progress: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
             }
+            // Ensure we update the sprite transform
+            if (videoSprite) {
+                updateSpriteTransform();
+            }
         },
         onComplete: function() {
             console.log(`Zoom complete: level=${state.currentZoom.toFixed(2)}, center=(${state.currentCenterX.toFixed(0)}, ${state.currentCenterY.toFixed(0)})`);
+            // Send zoom level update to main process after animation completes
+            window.electronAPI.sendZoomLevelUpdate(level);
         }
     });
 }
@@ -2178,3 +2184,51 @@ document.addEventListener('keydown', (event) => {
     window.electronAPI.stopRecording();
   }
 }); 
+
+// Add listeners for zoom commands from main process (near the initializeZoomControls function)
+// This can be placed at the end of the file or in an initialization function
+
+function initializeZoomControls() {
+    const zoomInButton = document.getElementById('zoom-in');
+    const zoomOutButton = document.getElementById('zoom-out');
+    const resetZoomButton = document.getElementById('reset-zoom');
+    
+    if (zoomInButton) {
+        zoomInButton.addEventListener('click', () => {
+            const newZoom = state.currentZoom * 1.2;
+            setZoom(newZoom, state.currentCenterX, state.currentCenterY);
+        });
+    }
+    
+    if (zoomOutButton) {
+        zoomOutButton.addEventListener('click', () => {
+            const newZoom = state.currentZoom / 1.2;
+            setZoom(newZoom, state.currentCenterX, state.currentCenterY);
+        });
+    }
+    
+    if (resetZoomButton) {
+        resetZoomButton.addEventListener('click', () => {
+            setZoom(1.0, 1920, 1080);
+        });
+    }
+}
+
+// Add listeners for IPC commands from panel window
+window.electronAPI.on('zoom-in', () => {
+    console.log('Received zoom-in command from panel');
+    const newZoom = state.currentZoom * 1.2;
+    setZoom(newZoom, state.currentCenterX, state.currentCenterY);
+});
+
+window.electronAPI.on('zoom-out', () => {
+    console.log('Received zoom-out command from panel');
+    const newZoom = state.currentZoom / 1.2;
+    setZoom(newZoom, state.currentCenterX, state.currentCenterY);
+});
+
+window.electronAPI.on('toggle-pip', () => {
+    console.log('Received toggle-pip command from panel');
+    // To be implemented in future
+    console.log("Toggle PiP received");
+});

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Magic Window Controls</title>
+    <style>
+        body {
+            background-color: #333;
+            color: white;
+            font-family: Arial, sans-serif;
+            padding: 10px;
+            margin: 0;
+            user-select: none;
+            -webkit-app-region: drag; /* Makes the window draggable */
+            display: flex;
+            flex-direction: column;
+            width: 230px;
+            height: 60px;
+            overflow: hidden;
+        }
+        
+        .controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            -webkit-app-region: no-drag; /* Controls should not be draggable */
+        }
+        
+        button {
+            background-color: #555;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            margin: 0 5px;
+            border-radius: 3px;
+            cursor: pointer;
+            -webkit-app-region: no-drag;
+        }
+        
+        button:hover {
+            background-color: #666;
+        }
+        
+        #zoom-level {
+            font-size: 14px;
+            min-width: 40px;
+            text-align: center;
+        }
+        
+        #zoom-controls {
+            display: flex;
+            align-items: center;
+        }
+        
+        #window-controls {
+            margin-left: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <div id="zoom-controls">
+            <button id="zoom-out">-</button>
+            <span id="zoom-level">1.0x</span>
+            <button id="zoom-in">+</button>
+        </div>
+        
+        <button id="toggle-pip">PiP</button>
+        
+        <div id="window-controls">
+            <button id="collapse">_</button>
+        </div>
+    </div>
+
+    <script src="panelRenderer.js"></script>
+</body>
+</html> 
