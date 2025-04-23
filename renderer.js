@@ -40,6 +40,11 @@ let secondsElapsed = 0;
 const zoomPresets = [1.0, 1.5, 2.0, 4.0];
 let currentPresetIndex = 0;
 
+// Add PiP state and snapshot throttling variables
+let isPipVisible = false;
+let lastPipUpdateTime = 0;
+const PIP_UPDATE_INTERVAL = 250; // Update PiP every 250ms
+
 // Function to format seconds as HH:MM:SS
 function formatTime(seconds) {
   const hours = Math.floor(seconds / 3600);
@@ -2267,4 +2272,90 @@ window.electronAPI.on('toggle-pip', () => {
     console.log('Received toggle-pip command from panel');
     // To be implemented in future
     console.log("Toggle PiP received");
+});
+
+// Add togglePip function
+function togglePip() {
+    isPipVisible = !isPipVisible;
+    console.log(`PiP visibility toggled: ${isPipVisible}`);
+    
+    // Send state update to main process
+    window.electronAPI.sendPipStateUpdate(isPipVisible);
+    
+    // If PiP is now visible, send an immediate frame
+    if (isPipVisible && sourceVideo) {
+        sendPipSnapshot();
+        
+        // Also send video dimensions
+        const videoWidth = sourceVideo.videoWidth || 3840;
+        const videoHeight = sourceVideo.videoHeight || 2160;
+        window.electronAPI.sendVideoSizeUpdate(videoWidth, videoHeight);
+    }
+}
+
+// Function to create and send a snapshot for PiP
+function sendPipSnapshot() {
+    if (!isPipVisible || !sourceVideo || !sourceVideo.videoWidth) return;
+    
+    // Throttle updates to avoid excessive communication
+    const now = Date.now();
+    if (now - lastPipUpdateTime < PIP_UPDATE_INTERVAL) return;
+    lastPipUpdateTime = now;
+    
+    try {
+        // Create a small offscreen canvas for the snapshot
+        const offscreenCanvas = document.createElement('canvas');
+        
+        // Set to a small size for efficiency (should match PiP canvas size)
+        offscreenCanvas.width = 210;
+        offscreenCanvas.height = 118;
+        
+        // Get context and draw the original unzoomed video frame
+        const ctx = offscreenCanvas.getContext('2d');
+        
+        // Draw the source video (unzoomed) to fit the offscreen canvas
+        ctx.drawImage(sourceVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        
+        // Convert to data URL and send to main process
+        const dataURL = offscreenCanvas.toDataURL('image/jpeg', 0.7); // Use lower quality for better performance
+        window.electronAPI.sendPipFrameUpdate(dataURL);
+    } catch (error) {
+        console.error('Error creating PiP snapshot:', error);
+    }
+}
+
+// Modify Canvas2D render function to include PiP snapshot sending
+function initializeCanvas2DRenderingLoop() {
+    // ... existing code ...
+    
+    function render() {
+        // ... existing canvas rendering code ...
+        
+        // Add PiP snapshot sending at the end of the render function
+        sendPipSnapshot();
+        
+        // ... continue with the rest of the render function ...
+    }
+    
+    // ... rest of the function ...
+}
+
+// Modify setZoom function to include zoom state update
+function setZoom(level, centerX, centerY, duration = 0.3) {
+    // ... existing code ...
+    
+    // Add additional code to update PiP zoom rectangle information
+    // (This is handled via the zoom level update which already exists)
+}
+
+// Add handlers for PiP and zoom center commands
+window.electronAPI.onTogglePip(() => {
+    console.log('Received toggle-pip command from panel or shortcut');
+    togglePip();
+});
+
+window.electronAPI.onSetZoomCenter((coords) => {
+    console.log(`Received set-zoom-center command: (${coords.x}, ${coords.y})`);
+    // Apply the new zoom center while maintaining the current zoom level
+    setZoom(state.currentZoom, coords.x, coords.y);
 });

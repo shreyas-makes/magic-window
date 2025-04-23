@@ -15,7 +15,7 @@
             display: flex;
             flex-direction: column;
             width: 230px;
-            height: 60px;
+            height: 170px; /* Increased height to accommodate PiP */
             overflow: hidden;
         }
         
@@ -24,6 +24,7 @@
             align-items: center;
             justify-content: space-between;
             -webkit-app-region: no-drag; /* Controls should not be draggable */
+            margin-bottom: 10px;
         }
         
         button {
@@ -55,6 +56,31 @@
         #window-controls {
             margin-left: auto;
         }
+        
+        #pip-container {
+            width: 210px;
+            height: 118px; /* 16:9 aspect ratio */
+            background-color: #222;
+            border: 1px solid #555;
+            border-radius: 3px;
+            margin: 0 auto;
+            position: relative;
+            -webkit-app-region: no-drag;
+            display: none; /* Initially hidden */
+        }
+        
+        #pip-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        #zoom-rectangle {
+            position: absolute;
+            border: 2px solid #4CAF50;
+            background-color: rgba(76, 175, 80, 0.15);
+            pointer-events: none; /* Allow clicking through the rectangle */
+        }
     </style>
 </head>
 <body>
@@ -70,6 +96,11 @@
         <div id="window-controls">
             <button id="collapse">_</button>
         </div>
+    </div>
+    
+    <div id="pip-container">
+        <canvas id="pip-canvas"></canvas>
+        <div id="zoom-rectangle"></div>
     </div>
 
     <script src="panelRenderer.js"></script>

@@ -587,6 +587,14 @@ function registerGlobalShortcuts() {
     console.log('Keyboard shortcut for recording toggle triggered');
     toggleRecording();
   });
+
+  // Register Cmd+0 shortcut for toggling PiP
+  globalShortcut.register('CommandOrControl+0', () => {
+    console.log('Cmd+0 pressed - toggling PiP');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('toggle-pip');
+    }
+  });
 }
 
 // Function to unregister global shortcuts
@@ -1325,5 +1333,41 @@ ipcMain.on('panel-collapse', () => {
     } else {
       floatingPanelWindow.minimize();
     }
+  }
+});
+
+// Handle panel set zoom center command
+ipcMain.on('panel-set-zoom-center', (event, coords) => {
+  console.log('Received set-zoom-center from panel:', coords);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('set-zoom-center', coords);
+  }
+});
+
+// Handle PiP frame updates from renderer to panel
+ipcMain.on('pip-frame-update', (event, dataURL) => {
+  // Forward to floating panel if it exists
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    floatingPanelWindow.webContents.send('pip-frame-update', dataURL);
+  }
+});
+
+// Handle PiP state update from renderer to panel
+ipcMain.on('pip-state-update', (event, isActive) => {
+  console.log('Received PiP state update from renderer:', isActive);
+  
+  // Forward to floating panel if it exists
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    floatingPanelWindow.webContents.send('update-pip-state', isActive);
+  }
+});
+
+// Handle video size update from renderer to panel
+ipcMain.on('video-size-update', (event, width, height) => {
+  console.log(`Received video size update from renderer: ${width}x${height}`);
+  
+  // Forward to floating panel if it exists
+  if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+    floatingPanelWindow.webContents.send('video-size-update', width, height);
   }
 }); 

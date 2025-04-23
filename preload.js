@@ -136,5 +136,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendZoomLevelUpdate: (level) => {
     console.log('Sending zoom level update:', level);
     ipcRenderer.send('zoom-level-update', level);
+  },
+  // Add methods for PiP functionality
+  sendPipFrameUpdate: (dataURL) => {
+    console.log('Sending PiP frame update to main process');
+    ipcRenderer.send('pip-frame-update', dataURL);
+  },
+  sendPipStateUpdate: (isActive) => {
+    console.log('Sending PiP state update to main process:', isActive);
+    ipcRenderer.send('pip-state-update', isActive);
+  },
+  sendVideoSizeUpdate: (width, height) => {
+    console.log(`Sending video size update to main process: ${width}x${height}`);
+    ipcRenderer.send('video-size-update', width, height);
+  },
+  // Add listeners for PiP commands
+  onTogglePip: (callback) => {
+    console.log('Registering handler for channel: toggle-pip');
+    ipcRenderer.on('toggle-pip', (event) => callback());
+  },
+  onSetZoomCenter: (callback) => {
+    console.log('Registering handler for channel: set-zoom-center');
+    ipcRenderer.on('set-zoom-center', (event, coords) => callback(coords));
   }
 }); 

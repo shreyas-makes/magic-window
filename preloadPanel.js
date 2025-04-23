@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('panelAPI', {
     console.log('Panel: Sending collapse command');
     ipcRenderer.send('panel-collapse');
   },
+  setZoomCenter: (x, y) => {
+    console.log(`Panel: Sending setZoomCenter command: (${x}, ${y})`);
+    ipcRenderer.send('panel-set-zoom-center', { x, y });
+  },
   
   // Receive updates from main process
   onUpdateZoomLevel: (callback) => {
@@ -31,6 +35,16 @@ contextBridge.exposeInMainWorld('panelAPI', {
     ipcRenderer.on('update-pip-state', (event, isActive) => {
       console.log('Panel: Received PiP state update:', isActive);
       callback(isActive);
+    });
+  },
+  onPipFrameUpdate: (callback) => {
+    ipcRenderer.on('pip-frame-update', (event, dataURL) => {
+      callback(dataURL);
+    });
+  },
+  onVideoSizeUpdate: (callback) => {
+    ipcRenderer.on('video-size-update', (event, width, height) => {
+      callback(width, height);
     });
   }
 }); 
