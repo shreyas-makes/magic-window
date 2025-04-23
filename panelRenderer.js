@@ -28,6 +28,11 @@ let zoomState = {
     canvasHeight: 2160
 };
 
+// Border effect variables
+const BORDER_COLORS = [0xFF5F1F, 0xFF1F8E, 0x8A2BE2]; // Orange/coral → pink → purple
+let borderPulseTime = 0; // Time counter for pulsing animation
+let lastFrameTime = 0; // For animation timing
+
 // Set initial display state for pipContainer
 pipContainer.style.display = 'none';
 
@@ -193,11 +198,67 @@ function updateZoomRectangle() {
             const rectX = rectCenterX - (rectWidth / 2);
             const rectY = rectCenterY - (rectHeight / 2);
             
-            // Draw the zoom rectangle
-            zoomRectGraphics.lineStyle(2, 0x4CAF50, 1);
-            zoomRectGraphics.beginFill(0x4CAF50, 0.15);
-            zoomRectGraphics.drawRect(rectX, rectY, rectWidth, rectHeight);
-            zoomRectGraphics.endFill();
+            // Create the pulsing effect (value between 0.3 and 1.0)
+            const now = performance.now();
+            const deltaTime = now - lastFrameTime;
+            lastFrameTime = now;
+            
+            borderPulseTime += deltaTime / 1000;
+            const pulseAlpha = 0.3 + (Math.sin(borderPulseTime * 2) * 0.35 + 0.35);
+            const lineWidth = 2; // Line thickness appropriate for the PiP size
+            
+            // Draw the zoom rectangle with gradient border
+            const gradientSteps = 8; // Number of steps for the gradient effect
+            
+            for (let i = 0; i < gradientSteps; i++) {
+                // Calculate gradient color and alpha
+                const ratio = i / (gradientSteps - 1);
+                
+                // Blend between the colors in BORDER_COLORS
+                let color;
+                if (ratio < 0.5) {
+                    // Blend between first and second color
+                    const blendRatio = ratio * 2;
+                    color = blendColors(BORDER_COLORS[0], BORDER_COLORS[1], blendRatio);
+                } else {
+                    // Blend between second and third color
+                    const blendRatio = (ratio - 0.5) * 2;
+                    color = blendColors(BORDER_COLORS[1], BORDER_COLORS[2], blendRatio);
+                }
+                
+                // Draw a segment of the border
+                zoomRectGraphics.lineStyle(lineWidth, color, pulseAlpha);
+                
+                // Calculate segment position - draw clockwise starting from top-left
+                if (i < gradientSteps / 4) {
+                    // Top segment
+                    const segmentRatio = i / (gradientSteps / 4);
+                    const segmentX = rectX + rectWidth * segmentRatio;
+                    zoomRectGraphics.moveTo(segmentX, rectY);
+                    zoomRectGraphics.lineTo(Math.min(segmentX + rectWidth / (gradientSteps / 4), rectX + rectWidth), rectY);
+                } else if (i < gradientSteps / 2) {
+                    // Right segment
+                    const segmentRatio = (i - gradientSteps / 4) / (gradientSteps / 4);
+                    const segmentY = rectY + rectHeight * segmentRatio;
+                    zoomRectGraphics.moveTo(rectX + rectWidth, segmentY);
+                    zoomRectGraphics.lineTo(rectX + rectWidth, Math.min(segmentY + rectHeight / (gradientSteps / 4), rectY + rectHeight));
+                } else if (i < 3 * gradientSteps / 4) {
+                    // Bottom segment
+                    const segmentRatio = (i - gradientSteps / 2) / (gradientSteps / 4);
+                    const segmentX = rectX + rectWidth - rectWidth * segmentRatio;
+                    zoomRectGraphics.moveTo(segmentX, rectY + rectHeight);
+                    zoomRectGraphics.lineTo(Math.max(segmentX - rectWidth / (gradientSteps / 4), rectX), rectY + rectHeight);
+                } else {
+                    // Left segment
+                    const segmentRatio = (i - 3 * gradientSteps / 4) / (gradientSteps / 4);
+                    const segmentY = rectY + rectHeight - rectHeight * segmentRatio;
+                    zoomRectGraphics.moveTo(rectX, segmentY);
+                    zoomRectGraphics.lineTo(rectX, Math.max(segmentY - rectHeight / (gradientSteps / 4), rectY));
+                }
+            }
+            
+            // Request animation frame to continuously update the pulsing effect
+            requestAnimationFrame(updateZoomRectangle);
         } catch (error) {
             console.error('Error updating zoom rectangle with PIXI.js:', error);
         }
@@ -223,15 +284,98 @@ function updateZoomRectangle() {
         const rectX = rectCenterX - (rectWidth / 2);
         const rectY = rectCenterY - (rectHeight / 2);
         
-        // Draw rectangle
-        pipContext.strokeStyle = '#4CAF50';
-        pipContext.lineWidth = 2;
-        pipContext.strokeRect(rectX, rectY, rectWidth, rectHeight);
+        // Create the pulsing effect
+        const now = performance.now();
+        const deltaTime = now - lastFrameTime;
+        lastFrameTime = now;
         
-        // Draw semi-transparent fill
-        pipContext.fillStyle = 'rgba(76, 175, 80, 0.15)';
-        pipContext.fillRect(rectX, rectY, rectWidth, rectHeight);
+        borderPulseTime += deltaTime / 1000;
+        const pulseAlpha = 0.3 + (Math.sin(borderPulseTime * 2) * 0.35 + 0.35);
+        
+        // For Canvas 2D, we'll use a simpler approach - we'll just change colors 
+        // along the rectangle to simulate a gradient
+        const gradientSteps = 4; // Fewer steps for Canvas 2D
+        const lineWidth = 2;
+        
+        // Define the 4 corners of the rectangle
+        const corners = [
+            { x: rectX, y: rectY }, // Top-left
+            { x: rectX + rectWidth, y: rectY }, // Top-right
+            { x: rectX + rectWidth, y: rectY + rectHeight }, // Bottom-right
+            { x: rectX, y: rectY + rectHeight } // Bottom-left
+        ];
+        
+        // Draw each side with a different color from the gradient
+        for (let i = 0; i < gradientSteps; i++) {
+            const ratio = i / (gradientSteps - 1);
+            
+            // Get color based on position in the gradient
+            let color;
+            if (ratio < 0.5) {
+                const blendRatio = ratio * 2;
+                color = blendColorsRgba(BORDER_COLORS[0], BORDER_COLORS[1], blendRatio, pulseAlpha);
+            } else {
+                const blendRatio = (ratio - 0.5) * 2;
+                color = blendColorsRgba(BORDER_COLORS[1], BORDER_COLORS[2], blendRatio, pulseAlpha);
+            }
+            
+            // Convert hex color to rgba string for Canvas 2D
+            pipContext.strokeStyle = color;
+            pipContext.lineWidth = lineWidth;
+            
+            // Draw one side of the rectangle
+            const startIdx = i;
+            const endIdx = (i + 1) % 4;
+            
+            pipContext.beginPath();
+            pipContext.moveTo(corners[startIdx].x, corners[startIdx].y);
+            pipContext.lineTo(corners[endIdx].x, corners[endIdx].y);
+            pipContext.stroke();
+        }
+        
+        // Request animation frame to continuously update the pulsing effect
+        requestAnimationFrame(updateZoomRectangle);
     }
+}
+
+// Helper function to blend between two colors for PIXI
+function blendColors(color1, color2, ratio) {
+    // Extract RGB components
+    const r1 = (color1 >> 16) & 0xFF;
+    const g1 = (color1 >> 8) & 0xFF;
+    const b1 = color1 & 0xFF;
+    
+    const r2 = (color2 >> 16) & 0xFF;
+    const g2 = (color2 >> 8) & 0xFF;
+    const b2 = color2 & 0xFF;
+    
+    // Blend the colors
+    const r = Math.round(r1 + (r2 - r1) * ratio);
+    const g = Math.round(g1 + (g2 - g1) * ratio);
+    const b = Math.round(b1 + (b2 - b1) * ratio);
+    
+    // Combine into a single color value
+    return (r << 16) | (g << 8) | b;
+}
+
+// Helper function to blend between two colors for Canvas 2D context (returns rgba string)
+function blendColorsRgba(color1, color2, ratio, alpha) {
+    // Extract RGB components
+    const r1 = (color1 >> 16) & 0xFF;
+    const g1 = (color1 >> 8) & 0xFF;
+    const b1 = color1 & 0xFF;
+    
+    const r2 = (color2 >> 16) & 0xFF;
+    const g2 = (color2 >> 8) & 0xFF;
+    const b2 = color2 & 0xFF;
+    
+    // Blend the colors
+    const r = Math.round(r1 + (r2 - r1) * ratio);
+    const g = Math.round(g1 + (g2 - g1) * ratio);
+    const b = Math.round(b1 + (b2 - b1) * ratio);
+    
+    // Return rgba string
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 // Process and display a frame in the PiP canvas

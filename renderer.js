@@ -18,6 +18,11 @@ let usePixi = false; // Whether to use PIXI.js or fallback to canvas API
 let canvasContext = null; // Canvas 2D context (for fallback renderer)
 let animationFrameId = null; // For cancelAnimationFrame in fallback renderer
 
+// Border effect variables
+let borderGraphics = null; // PIXI graphics for border effect
+const BORDER_COLORS = [0xFF5F1F, 0xFF1F8E, 0x8A2BE2]; // Orange/coral → pink → purple
+let borderPulseTime = 0; // Time counter for pulsing animation
+
 // Zoom state management
 const state = {
     currentZoom: 1.0,
@@ -298,140 +303,223 @@ function initializePixi() {
 
 // Initialize canvas 2D rendering loop (fallback when PIXI fails)
 function initializeCanvas2DRenderingLoop() {
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-    console.log('Cancelled previous animation frame');
-  }
-  
-  // Source cropping region (default to full frame)
-  const cropRegion = {
-    enabled: false,
-    x: 0,
-    y: 0,
-    width: 0, // Will be set to video width
-    height: 0 // Will be set to video height
-  };
-  
-  // Add crop region controls to the canvas containers
-  addCropControls(cropRegion);
-  
-  // Simple render loop to draw video to canvas
-  function render() {
-    if (sourceVideo && canvasContext) {
-      try {
-        // Log dimensions and scaling occasionally to help debug issues
-        const shouldLogDebug = Math.random() < 0.005; // Less frequent to reduce console spam
+    try {
+        console.log('Initializing Canvas 2D rendering loop');
         
-        // Only log occasionally to avoid flooding the console
-        if (Math.random() < 0.01) {
-          console.log("Rendering frame to canvas:", sourceVideo.videoWidth, "x", sourceVideo.videoHeight);
-        }
-        
-        // Clear the canvas first
-        canvasContext.fillStyle = '#000000';
-        canvasContext.fillRect(0, 0, canvasContext.canvas.width, canvasContext.canvas.height);
-        
-        // Check if video has dimensions and is not paused
-        if (sourceVideo.videoWidth > 0 && sourceVideo.videoHeight > 0 && !sourceVideo.paused) {
-          // Use the full canvas dimensions
-          const canvasWidth = canvasContext.canvas.width;
-          const canvasHeight = canvasContext.canvas.height;
-          
-          if (shouldLogDebug) {
-            debugLog(`Canvas: ${canvasWidth}x${canvasHeight}, Video: ${sourceVideo.videoWidth}x${sourceVideo.videoHeight}`);
-          }
-          
-          // Save canvas state
-          canvasContext.save();
-          
-          // Calculate scale to fill the canvas while maintaining aspect ratio
-          const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
-          const canvasRatio = canvasWidth / canvasHeight;
-          
-          let scale, offsetX = 0, offsetY = 0;
-          
-          if (videoRatio > canvasRatio) {
-            // Video is wider than canvas (relative to height)
-            scale = canvasHeight / sourceVideo.videoHeight;
-            offsetX = (canvasWidth - sourceVideo.videoWidth * scale) / 2;
-            if (shouldLogDebug) debugLog(`Scaling based on height: ${scale}`);
-          } else {
-            // Video is taller than canvas (relative to width)
-            scale = canvasWidth / sourceVideo.videoWidth;
-            offsetY = (canvasHeight - sourceVideo.videoHeight * scale) / 2;
-            if (shouldLogDebug) debugLog(`Scaling based on width: ${scale}`);
-          }
-          
-          // Apply base transformations to center and scale the video
-          canvasContext.translate(canvasWidth / 2, canvasHeight / 2);
-          
-          // Apply zoom if needed (multiply by the base scale)
-          const finalScale = scale * state.currentZoom;
-          canvasContext.scale(finalScale, finalScale);
-          
-          if (shouldLogDebug) debugLog(`Final scale with zoom: ${finalScale}`);
-          
-          // Calculate proper offsets based on zoom center
-          const zoomCenterOffsetX = (state.currentCenterX / sourceVideo.videoWidth) - 0.5;
-          const zoomCenterOffsetY = (state.currentCenterY / sourceVideo.videoHeight) - 0.5;
-          
-          if (shouldLogDebug && state.currentZoom > 1) {
-            debugLog(`Zoom center offset: (${zoomCenterOffsetX}, ${zoomCenterOffsetY})`);
-          }
-          
-          // Update crop region dimensions if they're not set
-          if (cropRegion.width === 0 || cropRegion.height === 0) {
-            cropRegion.width = sourceVideo.videoWidth;
-            cropRegion.height = sourceVideo.videoHeight;
-          }
-          
-          // Draw video frame to canvas - use video's natural dimensions or crop region
-          if (cropRegion.enabled) {
-            canvasContext.drawImage(
-              sourceVideo, 
-              cropRegion.x, cropRegion.y, cropRegion.width, cropRegion.height,
-              -sourceVideo.videoWidth / 2 - (sourceVideo.videoWidth * zoomCenterOffsetX), 
-              -sourceVideo.videoHeight / 2 - (sourceVideo.videoHeight * zoomCenterOffsetY),
-              sourceVideo.videoWidth, sourceVideo.videoHeight
-            );
-          } else {
-            canvasContext.drawImage(
-              sourceVideo, 
-              0, 0, sourceVideo.videoWidth, sourceVideo.videoHeight,
-              -sourceVideo.videoWidth / 2 - (sourceVideo.videoWidth * zoomCenterOffsetX), 
-              -sourceVideo.videoHeight / 2 - (sourceVideo.videoHeight * zoomCenterOffsetY),
-              sourceVideo.videoWidth, sourceVideo.videoHeight
-            );
-          }
-          
-          // Restore canvas state
-          canvasContext.restore();
-          
-          // Debug drawing to show canvas boundaries (uncomment if needed)
-          // canvasContext.strokeStyle = 'red';
-          // canvasContext.lineWidth = 4;
-          // canvasContext.strokeRect(0, 0, canvasWidth, canvasHeight);
-          
-          // Send PiP snapshots if enabled (don't use interval in Canvas2D mode)
-          if (isPipVisible && !pipSnapshotInterval) {
-            // Only send snapshot occasionally to avoid overloading
-            if (Math.random() < 0.05) { // roughly every 20 frames at 60fps
-              sendPipSnapshot();
+        // Make sure we have the canvas 2D context
+        if (!canvasContext) {
+            const canvasElement = document.getElementById('main-canvas');
+            canvasContext = canvasElement.getContext('2d', { willReadFrequently: true });
+            
+            if (!canvasContext) {
+                throw new Error('Unable to get 2D context');
             }
-          }
         }
-      } catch (err) {
-        console.error("Error rendering video to canvas:", err);
-      }
+        
+        // Cancel any existing animation frame
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+        
+        // Start the render loop
+        function render() {
+            try {
+                // Clear canvas
+                canvasContext.fillStyle = '#000000';
+                canvasContext.fillRect(0, 0, canvasContext.canvas.width, canvasContext.canvas.height);
+                
+                // Skip rendering if video isn't ready
+                if (!sourceVideo || sourceVideo.readyState < 2) { // HAVE_CURRENT_DATA
+                    animationFrameId = requestAnimationFrame(render);
+                    return;
+                }
+                
+                // Interpolate towards target zoom smoothly
+                const interpolationFactor = 0.1;
+                state.currentZoom += (state.targetZoom - state.currentZoom) * interpolationFactor;
+                state.currentCenterX += (state.targetCenterX - state.currentCenterX) * interpolationFactor;
+                state.currentCenterY += (state.targetCenterY - state.currentCenterY) * interpolationFactor;
+                
+                // Calculate dimensions and positions
+                const canvasWidth = canvasContext.canvas.width;
+                const canvasHeight = canvasContext.canvas.height;
+                const videoWidth = sourceVideo.videoWidth;
+                const videoHeight = sourceVideo.videoHeight;
+                
+                if (videoWidth === 0 || videoHeight === 0) {
+                    animationFrameId = requestAnimationFrame(render);
+                    return;
+                }
+                
+                // Calculate base scale to fit while maintaining aspect ratio
+                const videoRatio = videoWidth / videoHeight;
+                const canvasRatio = canvasWidth / canvasHeight;
+                
+                let baseScale;
+                if (videoRatio > canvasRatio) {
+                    baseScale = canvasHeight / videoHeight;
+                } else {
+                    baseScale = canvasWidth / videoWidth;
+                }
+                
+                // Apply the zoom level
+                const scale = baseScale * state.currentZoom;
+                
+                // Calculate the offset based on center
+                const scaledVideoWidth = videoWidth * scale;
+                const scaledVideoHeight = videoHeight * scale;
+                
+                // Center point in video coordinates
+                const centerXNormalized = (state.currentCenterX / videoWidth);
+                const centerYNormalized = (state.currentCenterY / videoHeight);
+                
+                // Calculate position to place video with centering offset
+                const left = (canvasWidth / 2) - (scaledVideoWidth * centerXNormalized);
+                const top = (canvasHeight / 2) - (scaledVideoHeight * centerYNormalized);
+                
+                // Draw the video
+                canvasContext.drawImage(
+                    sourceVideo,
+                    left, top,
+                    scaledVideoWidth, scaledVideoHeight
+                );
+                
+                // Draw border effect
+                drawBorderEffectCanvas2D();
+                
+                // Send periodic zoom state updates
+                sendZoomStateUpdate();
+                
+                // Schedule next frame
+                animationFrameId = requestAnimationFrame(render);
+            } catch (error) {
+                console.error('Error in Canvas 2D render loop:', error);
+                // Continue rendering despite errors
+                animationFrameId = requestAnimationFrame(render);
+            }
+        }
+        
+        // Start the render loop
+        render();
+        
+        return true;
+    } catch (error) {
+        console.error('Error initializing Canvas 2D rendering:', error);
+        return false;
     }
+}
+
+// Function to draw the border effect with Canvas 2D
+function drawBorderEffectCanvas2D() {
+    if (!canvasContext) return;
     
-    // Continue the loop
-    animationFrameId = requestAnimationFrame(render);
-  }
-  
-  // Start the render loop
-  animationFrameId = requestAnimationFrame(render);
-  console.log('Canvas 2D rendering loop started');
+    try {
+        // Calculate visible portion of the video
+        const zoom = state.currentZoom;
+        const canvasW = canvasContext.canvas.width;
+        const canvasH = canvasContext.canvas.height;
+        
+        // Calculate the visible portion of the video in canvas coordinates
+        // This is the zoomed viewport (inner border)
+        const visibleRectW = canvasW / zoom;
+        const visibleRectH = canvasH / zoom;
+        
+        // Calculate the top-left position of the visible rect
+        const visibleRectX = state.currentCenterX - (visibleRectW / 2);
+        const visibleRectY = state.currentCenterY - (visibleRectH / 2);
+        
+        // Scale to canvas coordinates
+        const canvasWidth = canvasContext.canvas.width;
+        const canvasHeight = canvasContext.canvas.height;
+        const videoWidth = sourceVideo.videoWidth;
+        const videoHeight = sourceVideo.videoHeight;
+        
+        // Calculate base scale to fit while maintaining aspect ratio
+        const videoRatio = videoWidth / videoHeight;
+        const canvasRatio = canvasWidth / canvasHeight;
+        
+        let baseScale;
+        if (videoRatio > canvasRatio) {
+            baseScale = canvasHeight / videoHeight;
+        } else {
+            baseScale = canvasWidth / videoWidth;
+        }
+        
+        // Apply the zoom level
+        const scale = baseScale * state.currentZoom;
+        
+        // Calculate the offset based on center
+        const centerXNormalized = (state.currentCenterX / videoWidth);
+        const centerYNormalized = (state.currentCenterY / videoHeight);
+        
+        // Convert visible rect to canvas coordinates
+        const innerRectX = (canvasWidth / 2) - (scale * videoWidth * centerXNormalized) + (visibleRectX * scale);
+        const innerRectY = (canvasHeight / 2) - (scale * videoHeight * centerYNormalized) + (visibleRectY * scale);
+        const innerRectW = visibleRectW * scale;
+        const innerRectH = visibleRectH * scale;
+        
+        // Create the pulsing effect (value between 0.3 and 1.0)
+        borderPulseTime += 0.016; // Approximate for 60fps
+        const pulseAlpha = 0.3 + (Math.sin(borderPulseTime * 2) * 0.35 + 0.35);
+        const lineWidth = 6; // Thicker line for better visibility
+        
+        // Define the 4 corners of the rectangle
+        const corners = [
+            { x: innerRectX, y: innerRectY }, // Top-left
+            { x: innerRectX + innerRectW, y: innerRectY }, // Top-right
+            { x: innerRectX + innerRectW, y: innerRectY + innerRectH }, // Bottom-right
+            { x: innerRectX, y: innerRectY + innerRectH } // Bottom-left
+        ];
+        
+        // Draw each side with a different color from the gradient
+        for (let i = 0; i < 4; i++) {
+            const ratio = i / 3; // 0, 0.33, 0.67, 1.0
+            
+            // Get color based on position in the gradient
+            let color;
+            if (ratio < 0.5) {
+                const blendRatio = ratio * 2;
+                color = blendColorsRgba(BORDER_COLORS[0], BORDER_COLORS[1], blendRatio, pulseAlpha);
+            } else {
+                const blendRatio = (ratio - 0.5) * 2;
+                color = blendColorsRgba(BORDER_COLORS[1], BORDER_COLORS[2], blendRatio, pulseAlpha);
+            }
+            
+            // Draw one side of the rectangle
+            const startIdx = i;
+            const endIdx = (i + 1) % 4;
+            
+            canvasContext.lineWidth = lineWidth;
+            canvasContext.strokeStyle = color;
+            canvasContext.beginPath();
+            canvasContext.moveTo(corners[startIdx].x, corners[startIdx].y);
+            canvasContext.lineTo(corners[endIdx].x, corners[endIdx].y);
+            canvasContext.stroke();
+        }
+    } catch (error) {
+        console.error('Error drawing Canvas 2D border effect:', error);
+    }
+}
+
+// Helper function to blend between two colors for Canvas 2D (returns rgba string)
+function blendColorsRgba(color1, color2, ratio, alpha) {
+    // Extract RGB components
+    const r1 = (color1 >> 16) & 0xFF;
+    const g1 = (color1 >> 8) & 0xFF;
+    const b1 = color1 & 0xFF;
+    
+    const r2 = (color2 >> 16) & 0xFF;
+    const g2 = (color2 >> 8) & 0xFF;
+    const b2 = color2 & 0xFF;
+    
+    // Blend the colors
+    const r = Math.round(r1 + (r2 - r1) * ratio);
+    const g = Math.round(g1 + (g2 - g1) * ratio);
+    const b = Math.round(b1 + (b2 - b1) * ratio);
+    
+    // Return rgba string
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 // Function to add crop region controls
@@ -1150,155 +1238,195 @@ function toggleFXAA() {
 // Update setupPixiRendering to include FXAA setup and FPS monitoring
 async function setupPixiRendering() {
     try {
-        console.log('Setting up PIXI rendering');
+        // Wait for source-video to have proper dimensions
+        await waitForVideoMetadata(sourceVideo);
         
-        // Make sure we have a valid app instance
-        if (!app) {
-            throw new Error('Pixi application not initialized');
-        }
-        
-        // Clear the stage if we had a previous sprite
-        if (videoSprite) {
-            console.log('Removing previous video sprite');
-            app.stage.removeChild(videoSprite);
-            videoSprite.destroy();
-        }
-        
-        // Create a texture from the video element
-        console.log('Creating video texture');
+        // Initialize video sprite from source-video
         const videoTexture = PIXI.Texture.from(sourceVideo);
-        
-        // Explicitly set update properties on the texture
-        videoTexture.baseTexture.autoUpdate = true;
-        if (videoTexture.baseTexture.resource) {
-            videoTexture.baseTexture.resource.autoPlay = true;
-        }
-        
-        console.log('Creating sprite from texture');
-        // Create a sprite from the texture
         videoSprite = new PIXI.Sprite(videoTexture);
         
-        // Get canvas dimensions - compatible with all PIXI versions
-        const canvasWidth = app.view.width || app.renderer.width || 3840;
-        const canvasHeight = app.view.height || app.renderer.height || 2160;
+        // Set initial sprite position and pivot point
+        videoSprite.position.set(app.screen.width / 2, app.screen.height / 2);
+        videoSprite.pivot.set(sourceVideo.videoWidth / 2, sourceVideo.videoHeight / 2);
+        videoSprite.scale.set(state.currentZoom);
         
-        // Calculate proper scaling to maintain aspect ratio and fill canvas
-        // Will be properly set in the ticker callback once video dimensions are available
+        // Disable sprite interpolation for pixel-perfect rendering initially
+        // videoSprite.texture.baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;
         
-        // Set anchor to center for easier positioning and scaling
-        videoSprite.anchor.set(0.5, 0.5);
-        
-        // Position at center of canvas
-        videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
-        
-        // Add the sprite to the stage
+        // Add video sprite to the stage
         app.stage.addChild(videoSprite);
         
-        // Initialize FXAA filter if enabled
-        if (fxaaEnabled && !fxaaFilter) {
+        // Initialize borderGraphics and add it to the stage
+        borderGraphics = new PIXI.Graphics();
+        app.stage.addChild(borderGraphics);
+        
+        // Add FXAA filter if not already added
+        if (!fxaaFilter) {
             fxaaFilter = new PIXI.filters.FXAAFilter();
-            videoSprite.filters = [fxaaFilter];
+            // Don't enable by default - user can toggle with button
+            fxaaEnabled = false;
         }
         
-        // Set up the animation loop
-        let lastTime = performance.now();
-        let frameCount = 0;
-        const fpsUpdateInterval = 1000; // Update FPS every second
-
+        // For testing, you can enable FXAA by default
+        // toggleFXAA();
+        
+        // Debug log
+        debugLog('Pixi sprites and textures set up', true);
+        
+        // Set up ticker for animation loop
         const tickerCallback = () => {
-            // Update frame counter
-            frameCount++;
-            const currentTime = performance.now();
-            const elapsed = currentTime - lastTime;
-
-            // Calculate and log FPS every second
-            if (elapsed >= fpsUpdateInterval) {
-                const fps = Math.round((frameCount * 1000) / elapsed);
-                if (fps < 59) {
-                    console.warn('FPS dropped:', fps);
+            try {
+                // Skip rendering if we don't have a valid videoSprite or texture
+                if (!videoSprite || !videoSprite.texture || !videoSprite.texture.valid) {
+                    return;
                 }
-                frameCount = 0;
-                lastTime = currentTime;
-            }
-
-            // Update video texture
-            if (videoSprite && videoSprite.texture && sourceVideo.videoWidth > 0) {
-                // Force texture update if needed
-                if (videoSprite.texture.baseTexture) {
-                    videoSprite.texture.baseTexture.update();
+                
+                // Always update the texture from the video
+                if (sourceVideo.readyState >= 2) { // HAVE_CURRENT_DATA or better
+                    videoSprite.texture.update();
                 }
-
-                // Calculate scale to fill the canvas while maintaining aspect ratio
-                const videoRatio = sourceVideo.videoWidth / sourceVideo.videoHeight;
-                const canvasRatio = canvasWidth / canvasHeight;
-
-                let scale;
-                if (videoRatio > canvasRatio) {
-                    // Video is wider than canvas (relative to height)
-                    scale = canvasHeight / sourceVideo.videoHeight;
-                } else {
-                    // Video is taller than canvas (relative to width)
-                    scale = canvasWidth / sourceVideo.videoWidth;
-                }
-
-                // Apply the calculated scale, multiplied by zoom level
-                videoSprite.scale.set(scale * state.currentZoom);
-
-                // Apply zoom center offset if zoomed in
-                if (state.currentZoom > 1) {
-                    // Calculate normalized zoom center (0-1 range)
-                    const normalizedZoomX = (state.currentCenterX / sourceVideo.videoWidth) - 0.5;
-                    const normalizedZoomY = (state.currentCenterY / sourceVideo.videoHeight) - 0.5;
-
-                    // Apply offset based on normalized positions multiplied by zoom factor
-                    videoSprite.position.x = canvasWidth / 2 - (normalizedZoomX * sourceVideo.videoWidth * scale * (state.currentZoom - 1));
-                    videoSprite.position.y = canvasHeight / 2 + (normalizedZoomY * sourceVideo.videoHeight * scale * (state.currentZoom - 1)); // Changed minus to plus
-                } else {
-                    // Reset to center when not zoomed
-                    videoSprite.position.set(canvasWidth / 2, canvasHeight / 2);
-                }
+                
+                // Interpolate smoothly to target state
+                const interpolationFactor = 0.1; // Adjust for smoother/faster transitions
+                
+                state.currentZoom += (state.targetZoom - state.currentZoom) * interpolationFactor;
+                state.currentCenterX += (state.targetCenterX - state.currentCenterX) * interpolationFactor;
+                state.currentCenterY += (state.targetCenterY - state.currentCenterY) * interpolationFactor;
+                
+                // Apply updated position and scale
+                videoSprite.scale.set(state.currentZoom);
+                
+                // Calculate position based on zoom center
+                videoSprite.position.x = app.screen.width / 2 - (state.currentCenterX - (sourceVideo.videoWidth / 2)) * state.currentZoom;
+                videoSprite.position.y = app.screen.height / 2 - (state.currentCenterY - (sourceVideo.videoHeight / 2)) * state.currentZoom;
+                
+                // Draw the border effect
+                drawBorderEffect();
+                
+                // Send zoom state updates to panel at regular intervals
+                // Throttled in the sendZoomStateUpdate function
+                sendZoomStateUpdate();
+                
+            } catch (error) {
+                console.error('Error in PIXI ticker callback:', error);
             }
         };
-
-        // Add the ticker callback
-        if (app.ticker && app.ticker.add) {
-            app.ticker.add(tickerCallback);
-            console.log('Added ticker callback to app.ticker');
-        } else if (PIXI.Ticker && PIXI.Ticker.shared) {
-            PIXI.Ticker.shared.add(tickerCallback);
-            console.log('Added ticker callback to PIXI.Ticker.shared');
-        } else {
-            // Fallback to requestAnimationFrame if ticker is not available
-            console.log('Using requestAnimationFrame fallback for updates');
-            const animate = () => {
-                tickerCallback();
-                requestAnimationFrame(animate);
-            };
-            requestAnimationFrame(animate);
-        }
-
-        // Add FXAA toggle button
-        const fxaaToggle = document.createElement('button');
-        fxaaToggle.textContent = 'Toggle FXAA';
-        fxaaToggle.style.position = 'absolute';
-        fxaaToggle.style.bottom = '10px';
-        fxaaToggle.style.right = '10px';
-        fxaaToggle.style.zIndex = '1000'; // Make sure it's above other elements
-        fxaaToggle.className = 'btn'; // Add the btn class to match other buttons
-        fxaaToggle.addEventListener('click', toggleFXAA);
-        document.body.appendChild(fxaaToggle);
-
-        // Get the canvas stream for recording
-        console.log('Getting stream from canvas');
-        const canvasElement = document.getElementById('main-canvas');
-        canvasStream = canvasElement.captureStream(60);
         
-        console.log('PIXI.js rendering setup complete');
+        // Add the ticker callback
+        app.ticker.add(tickerCallback);
+        
         return true;
     } catch (error) {
         console.error('Error in setupPixiRendering:', error);
         return false;
     }
+}
+
+// Function to draw the border effect
+function drawBorderEffect() {
+    if (!borderGraphics || !videoSprite) return;
+    
+    try {
+        // Clear previous graphics
+        borderGraphics.clear();
+        
+        // Calculate visible portion of the video
+        const zoom = state.currentZoom;
+        const canvasW = app.screen.width;
+        const canvasH = app.screen.height;
+        
+        // Calculate the visible portion of the video in canvas coordinates
+        // This is the zoomed viewport (inner border)
+        const visibleRectW = canvasW / zoom;
+        const visibleRectH = canvasH / zoom;
+        
+        // Calculate the top-left position of the visible rect
+        const visibleRectX = state.currentCenterX - (visibleRectW / 2);
+        const visibleRectY = state.currentCenterY - (visibleRectH / 2);
+        
+        // Scale to canvas coordinates
+        const innerRectX = app.screen.width / 2 - (state.currentCenterX - visibleRectX) * zoom;
+        const innerRectY = app.screen.height / 2 - (state.currentCenterY - visibleRectY) * zoom;
+        const innerRectW = visibleRectW * zoom;
+        const innerRectH = visibleRectH * zoom;
+        
+        // Create the pulsing effect (value between 0.3 and 1.0)
+        borderPulseTime += app.ticker.deltaMS / 1000;
+        const pulseAlpha = 0.3 + (Math.sin(borderPulseTime * 2) * 0.35 + 0.35);
+        const lineWidth = 6; // Thicker line for better visibility
+        
+        // Draw inner border (zoomed area) with gradient
+        const gradientSteps = 10; // Number of steps for the gradient effect
+        
+        for (let i = 0; i < gradientSteps; i++) {
+            // Calculate gradient color and alpha
+            const ratio = i / (gradientSteps - 1);
+            
+            // Blend between the colors in BORDER_COLORS
+            let color;
+            if (ratio < 0.5) {
+                // Blend between first and second color
+                const blendRatio = ratio * 2;
+                color = blendColors(BORDER_COLORS[0], BORDER_COLORS[1], blendRatio);
+            } else {
+                // Blend between second and third color
+                const blendRatio = (ratio - 0.5) * 2;
+                color = blendColors(BORDER_COLORS[1], BORDER_COLORS[2], blendRatio);
+            }
+            
+            // Draw a segment of the border
+            borderGraphics.lineStyle(lineWidth, color, pulseAlpha);
+            
+            // Calculate segment position - draw clockwise starting from top-left
+            if (i < gradientSteps / 4) {
+                // Top segment
+                const segmentRatio = i / (gradientSteps / 4);
+                const segmentX = innerRectX + innerRectW * segmentRatio;
+                borderGraphics.moveTo(segmentX, innerRectY);
+                borderGraphics.lineTo(Math.min(segmentX + innerRectW / (gradientSteps / 4), innerRectX + innerRectW), innerRectY);
+            } else if (i < gradientSteps / 2) {
+                // Right segment
+                const segmentRatio = (i - gradientSteps / 4) / (gradientSteps / 4);
+                const segmentY = innerRectY + innerRectH * segmentRatio;
+                borderGraphics.moveTo(innerRectX + innerRectW, segmentY);
+                borderGraphics.lineTo(innerRectX + innerRectW, Math.min(segmentY + innerRectH / (gradientSteps / 4), innerRectY + innerRectH));
+            } else if (i < 3 * gradientSteps / 4) {
+                // Bottom segment
+                const segmentRatio = (i - gradientSteps / 2) / (gradientSteps / 4);
+                const segmentX = innerRectX + innerRectW - innerRectW * segmentRatio;
+                borderGraphics.moveTo(segmentX, innerRectY + innerRectH);
+                borderGraphics.lineTo(Math.max(segmentX - innerRectW / (gradientSteps / 4), innerRectX), innerRectY + innerRectH);
+            } else {
+                // Left segment
+                const segmentRatio = (i - 3 * gradientSteps / 4) / (gradientSteps / 4);
+                const segmentY = innerRectY + innerRectH - innerRectH * segmentRatio;
+                borderGraphics.moveTo(innerRectX, segmentY);
+                borderGraphics.lineTo(innerRectX, Math.max(segmentY - innerRectH / (gradientSteps / 4), innerRectY));
+            }
+        }
+    } catch (error) {
+        console.error('Error drawing border effect:', error);
+    }
+}
+
+// Helper function to blend between two colors
+function blendColors(color1, color2, ratio) {
+    // Extract RGB components
+    const r1 = (color1 >> 16) & 0xFF;
+    const g1 = (color1 >> 8) & 0xFF;
+    const b1 = color1 & 0xFF;
+    
+    const r2 = (color2 >> 16) & 0xFF;
+    const g2 = (color2 >> 8) & 0xFF;
+    const b2 = color2 & 0xFF;
+    
+    // Blend the colors
+    const r = Math.round(r1 + (r2 - r1) * ratio);
+    const g = Math.round(g1 + (g2 - g1) * ratio);
+    const b = Math.round(b1 + (b2 - b1) * ratio);
+    
+    // Combine into a single color value
+    return (r << 16) | (g << 8) | b;
 }
 
 // Function to setup Canvas 2D rendering (fallback)
@@ -2449,4 +2577,17 @@ function sendZoomStateUpdate() {
     } catch (err) {
         console.error('Error sending zoom state update:', err);
     }
+}
+
+// Function to wait for video metadata to be loaded
+function waitForVideoMetadata(videoElement) {
+    return new Promise((resolve) => {
+        if (videoElement.readyState >= 1) { // HAVE_METADATA or better
+            resolve();
+        } else {
+            videoElement.addEventListener('loadedmetadata', () => {
+                resolve();
+            }, { once: true });
+        }
+    });
 }
