@@ -6,6 +6,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const ffprobeStatic = require('ffprobe-static').path;
 const checkDiskSpace = require('check-disk-space').default;
+const { spawn } = require('child_process');
 
 // Enable Electron sandbox for security
 app.enableSandbox();
@@ -401,19 +402,98 @@ async function concatenateSegments(tempDir, outputPath) {
       
       console.log(`Found ${segments.length} segments to concatenate`);
       
+      // Validate segments before concatenation
+      let validSegments = [];
+      for (const segment of segments) {
+        // Skip empty segments
+        if (segment.size === 0) {
+          console.warn(`Skipping empty segment: ${segment.path}`);
+          continue;
+        }
+        
+        // Check if segment is a valid video file
+        try {
+          // Use ffprobe to check if the segment is valid
+          const probeResult = await new Promise((resolve, reject) => {
+            const ffprobe = spawn(ffprobeStatic, [
+              '-v', 'error',
+              '-select_streams', 'v:0',
+              '-show_entries', 'stream=codec_type',
+              '-of', 'json',
+              segment.path
+            ]);
+            
+            let probeData = '';
+            ffprobe.stdout.on('data', (data) => {
+              probeData += data.toString();
+            });
+            
+            ffprobe.on('error', (err) => {
+              reject(err);
+            });
+            
+            ffprobe.on('close', (code) => {
+              if (code !== 0) {
+                reject(new Error(`ffprobe exited with code ${code}`));
+              } else {
+                try {
+                  const jsonData = JSON.parse(probeData);
+                  resolve(jsonData);
+                } catch (err) {
+                  reject(new Error(`Failed to parse ffprobe output: ${err.message}`));
+                }
+              }
+            });
+          });
+          
+          // Check if segment has a video stream
+          if (probeResult && 
+              probeResult.streams && 
+              probeResult.streams.length > 0 && 
+              probeResult.streams[0].codec_type === 'video') {
+            validSegments.push(segment);
+          } else {
+            console.warn(`Skipping invalid segment: ${segment.path}`);
+          }
+        } catch (err) {
+          console.warn(`Error validating segment ${segment.path}: ${err.message}`);
+          continue;
+        }
+      }
+      
+      if (validSegments.length === 0) {
+        const errorMsg = `No valid video segments found in ${tempDir}`;
+        console.error(errorMsg);
+        return reject(new Error(errorMsg));
+      }
+      
+      console.log(`Found ${validSegments.length} valid segments to concatenate`);
+      
       // Create temporary file listing segments for ffmpeg
       const listFilePath = path.join(tempDir, 'segments.txt');
       let listContent = '';
       
-      for (const segment of segments) {
-        // Escape single quotes in paths for ffmpeg
-        const escapedPath = segment.path.replace(/'/g, '\\\'');
+      for (const segment of validSegments) {
+        // Format the path according to ffmpeg concat protocol requirements
+        // Use absolute paths and proper escaping
+        const absolutePath = segment.path;
+        
+        // Properly escape for ffmpeg concat demuxer format
+        // Backslashes must be escaped with another backslash, and quotes with a backslash
+        const escapedPath = absolutePath
+          .replace(/\\/g, '\\\\')  // Escape backslashes
+          .replace(/'/g, "\\'");   // Escape single quotes
+        
+        // Each line must be in the format: file 'path'
         listContent += `file '${escapedPath}'\n`;
       }
       
       try {
         fs.writeFileSync(listFilePath, listContent);
         console.log('Created segment list file at:', listFilePath);
+        // Log the content for debugging
+        console.log('Segments list content:');
+        console.log(listContent);
       } catch (err) {
         logError('Write Segment List', err);
         return reject(new Error(`Failed to create segment list: ${err.message}`));
@@ -433,7 +513,7 @@ async function concatenateSegments(tempDir, outputPath) {
         }
       }
       
-      // Use ffmpeg concat demuxer
+      // Use ffmpeg concat demuxer with safe mode disabled
       let command = ffmpeg()
         .input(listFilePath)
         .inputOptions(['-f', 'concat', '-safe', '0'])

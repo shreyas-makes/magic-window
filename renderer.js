@@ -3348,6 +3348,19 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initialize UI and canvas
   initializeUI();
+  
+  // Initialize PIXI.js before starting animation loop
+  try {
+    initializePixi();
+    console.log('PIXI.js initialized, starting animation loop');
+  } catch (error) {
+    console.error('Failed to initialize PIXI.js:', error);
+    console.log('Falling back to Canvas 2D rendering');
+    initializeCanvas2DRenderingLoop();
+  }
+  
+  // Start animation loop after initialization
+  animate();
 });
 
 // Set up IPC event listeners
@@ -3503,8 +3516,14 @@ function animate() {
   // Track frame performance
   trackFrameTime('render');
   
-  // Existing animation code
+  // Continue animation loop
   requestAnimationFrame(animate);
+  
+  // Check if app exists and has a renderer before using it
+  if (!app || !app.renderer) {
+    // Skip rendering if app or renderer not initialized
+    return;
+  }
   
   if (videoSprite && sourceVideo && sourceVideo.readyState >= 2) {
     const sourceWidth = sourceVideo.videoWidth;
@@ -3558,8 +3577,10 @@ function animate() {
     }
   }
   
-  // Render the scene
-  app.renderer.render(app.stage);
+  // Render the scene - Only call if app and renderer exist
+  if (app && app.renderer) {
+    app.renderer.render(app.stage);
+  }
 }
 
 // Function to initialize mouse and keyboard controls for zooming and panning
@@ -3737,9 +3758,23 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize zoom and pan controls
   initializeZoomPanControls();
   
-  // ... existing initialization code ...
+  // Set up IPC listeners
+  setupIpcListeners();
   
-  // Start animation loop
+  // Initialize UI elements
+  initializeUI();
+  
+  // Initialize PIXI.js before starting animation loop
+  try {
+    initializePixi();
+    console.log('PIXI.js initialized, starting animation loop');
+  } catch (error) {
+    console.error('Failed to initialize PIXI.js:', error);
+    console.log('Falling back to Canvas 2D rendering');
+    initializeCanvas2DRenderingLoop();
+  }
+  
+  // Start animation loop after initialization
   animate();
 });
 
